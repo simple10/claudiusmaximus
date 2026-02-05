@@ -33,7 +33,7 @@ Extract these values:
 - `VPS1_IP` - OpenClaw VPS
 - `VPS2_IP` - Observability VPS
 - `SSH_KEY_PATH` - SSH key location
-- `SSH_USER` - SSH username (usually `ubuntu` or `openclaw`)
+- `SSH_USER` - SSH username (should be `adminclaw` - the admin user with sudo)
 
 ---
 
@@ -59,10 +59,10 @@ ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 -o ConnectTimeout=10 openclaw@<VPS2_IP
 
 ```bash
 # On VPS-1: Check tunnel status and connectivity
-ssh -p 222 openclaw@<VPS1_IP> "sudo wg show && ping -c 3 10.0.0.2"
+ssh -p 222 adminclaw@<VPS1_IP> "sudo wg show && ping -c 3 10.0.0.2"
 
 # On VPS-2: Check tunnel status and connectivity
-ssh -p 222 openclaw@<VPS2_IP> "sudo wg show && ping -c 3 10.0.0.1"
+ssh -p 222 adminclaw@<VPS2_IP> "sudo wg show && ping -c 3 10.0.0.1"
 ```
 
 **Success criteria**:
@@ -77,10 +77,10 @@ ssh -p 222 openclaw@<VPS2_IP> "sudo wg show && ping -c 3 10.0.0.1"
 # Port 22 should be blocked (SSH is on 222)
 
 # On VPS-1
-ssh -p 222 openclaw@<VPS1_IP> "sudo ufw status"
+ssh -p 222 adminclaw@<VPS1_IP> "sudo ufw status"
 
 # On VPS-2
-ssh -p 222 openclaw@<VPS2_IP> "sudo ufw status"
+ssh -p 222 adminclaw@<VPS2_IP> "sudo ufw status"
 ```
 
 **Success criteria**:
@@ -98,7 +98,7 @@ ssh -p 222 openclaw@<VPS2_IP> "sudo ufw status"
 #### 2.1 VPS-1 Docker Services
 
 ```bash
-ssh -p 222 openclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
+ssh -p 222 adminclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
 ```
 
 **Expected services**:
@@ -109,7 +109,7 @@ ssh -p 222 openclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose ps -
 #### 2.2 VPS-1 Caddy Reverse Proxy
 
 ```bash
-ssh -p 222 openclaw@<VPS1_IP> "docker ps --filter name=caddy --format 'table {{.Names}}\t{{.Status}}'"
+ssh -p 222 adminclaw@<VPS1_IP> "docker ps --filter name=caddy --format 'table {{.Names}}\t{{.Status}}'"
 ```
 
 **Success criteria**: Caddy container is running.
@@ -117,7 +117,7 @@ ssh -p 222 openclaw@<VPS1_IP> "docker ps --filter name=caddy --format 'table {{.
 #### 2.3 VPS-2 Docker Services
 
 ```bash
-ssh -p 222 openclaw@<VPS2_IP> "cd /home/openclaw/monitoring && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
+ssh -p 222 adminclaw@<VPS2_IP> "cd /home/openclaw/monitoring && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
 ```
 
 **Expected services**:
@@ -131,7 +131,7 @@ ssh -p 222 openclaw@<VPS2_IP> "cd /home/openclaw/monitoring && docker compose ps
 #### 2.4 VPS-2 Caddy Reverse Proxy
 
 ```bash
-ssh -p 222 openclaw@<VPS2_IP> "docker ps --filter name=caddy --format 'table {{.Names}}\t{{.Status}}'"
+ssh -p 222 adminclaw@<VPS2_IP> "docker ps --filter name=caddy --format 'table {{.Names}}\t{{.Status}}'"
 ```
 
 **Success criteria**: Caddy container is running.
@@ -143,7 +143,7 @@ ssh -p 222 openclaw@<VPS2_IP> "docker ps --filter name=caddy --format 'table {{.
 #### 3.1 Check for Permission Errors on VPS-1
 
 ```bash
-ssh -p 222 openclaw@<VPS1_IP> "sudo journalctl -p err -n 50 --no-pager"
+ssh -p 222 adminclaw@<VPS1_IP> "sudo journalctl -p err -n 50 --no-pager"
 ```
 
 **Success criteria**: No permission-related errors for openclaw-gateway container.
@@ -151,7 +151,7 @@ ssh -p 222 openclaw@<VPS1_IP> "sudo journalctl -p err -n 50 --no-pager"
 #### 3.2 Check for Permission Errors on VPS-2
 
 ```bash
-ssh -p 222 openclaw@<VPS2_IP> "sudo journalctl -p err -n 50 --no-pager"
+ssh -p 222 adminclaw@<VPS2_IP> "sudo journalctl -p err -n 50 --no-pager"
 ```
 
 **Success criteria**: No critical errors related to monitoring stack.
@@ -159,7 +159,7 @@ ssh -p 222 openclaw@<VPS2_IP> "sudo journalctl -p err -n 50 --no-pager"
 #### 3.3 Check OpenClaw Gateway Logs
 
 ```bash
-ssh -p 222 openclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose logs --tail 50 openclaw-gateway"
+ssh -p 222 adminclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose logs --tail 50 openclaw-gateway"
 ```
 
 **Success criteria**: No error messages, gateway is listening on expected port.
@@ -229,34 +229,58 @@ mcp__chrome-devtools__take_snapshot()
 
 ---
 
+### 4.5 Security Hardening Verification (VPS-2)
+
+Verify that monitoring services are bound to localhost (not exposed publicly):
+
+```bash
+ssh -p 222 adminclaw@<VPS2_IP> "sudo ss -tlnp | grep -E '(9090|3000|3100|9093|9100|8080)'"
+```
+
+**Success criteria** - Services should bind to these addresses:
+- `127.0.0.1:9090` - Prometheus (localhost only)
+- `127.0.0.1:3000` - Grafana (localhost only)
+- `10.0.0.2:3100` - Loki (WireGuard only)
+- `127.0.0.1:9093` - Alertmanager (localhost only)
+- `127.0.0.1:9100` - Node Exporter (localhost only)
+- `127.0.0.1:8080` - cAdvisor (localhost only)
+
+**Security note**: Only Loki is accessible via WireGuard (to receive logs from VPS-1). All other services are bound to localhost, providing defense-in-depth even if UFW is misconfigured.
+
+---
+
 ### 5. Metrics and Logging Pipeline
 
 #### 5.1 Prometheus Targets
 
 ```bash
-ssh -p 222 openclaw@<VPS2_IP> "curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'"
+# Note: Prometheus is bound to 127.0.0.1 for security
+ssh -p 222 adminclaw@<VPS2_IP> "curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'"
 ```
 
-**Success criteria**: All targets show `"health": "up"`:
+**Success criteria**: These targets should show `"health": "up"`:
 - prometheus
 - node-exporter-local
 - cadvisor-local
 - node-exporter-openclaw
-- openclaw-gateway
+
+**Note**: `openclaw-gateway` may show as "down" - this is expected if the OpenClaw gateway doesn't expose a `/metrics` endpoint.
 
 #### 5.2 Loki Health
 
 ```bash
-ssh -p 222 openclaw@<VPS2_IP> "curl -s http://localhost:3100/ready"
+# Note: Loki is bound to WireGuard IP (10.0.0.2) for security
+ssh -p 222 adminclaw@<VPS2_IP> "curl -s http://10.0.0.2:3100/ready"
 ```
 
-**Success criteria**: Returns "ready".
+**Success criteria**: Returns "ready" (may show "Ingester not ready" briefly after restart - wait 15s and retry).
 
 #### 5.3 Verify Logs Flowing to Loki
 
 ```bash
 # Check if logs from VPS-1 are appearing in Loki
-ssh -p 222 openclaw@<VPS2_IP> "curl -s 'http://localhost:3100/loki/api/v1/query?query={host=\"openclaw\"}' | jq '.data.result | length'"
+# Note: Loki is bound to WireGuard IP (10.0.0.2) for security
+ssh -p 222 adminclaw@<VPS2_IP> "curl -s http://10.0.0.2:3100/loki/api/v1/labels | jq '.data'"
 ```
 
 **Success criteria**: Returns a number > 0 (indicates logs are being received).
@@ -270,7 +294,7 @@ ssh -p 222 openclaw@<VPS2_IP> "curl -s 'http://localhost:3100/loki/api/v1/query?
 First, get the Grafana password:
 
 ```bash
-ssh -p 222 openclaw@<VPS2_IP> "cat /home/openclaw/monitoring/.env | grep GRAFANA_PASSWORD"
+ssh -p 222 adminclaw@<VPS2_IP> "cat /home/openclaw/monitoring/.env | grep GRAFANA_PASSWORD"
 ```
 
 Then use DevTools to test:
@@ -335,9 +359,9 @@ For a rapid health check, run this single command (note: SSH uses port 222):
 
 ```bash
 echo "=== VPS-1 Health ===" && \
-ssh -p 222 openclaw@<VPS1_IP> "docker ps --format '{{.Names}}: {{.Status}}' && echo && sudo wg show wg0 | head -3" && \
+ssh -p 222 adminclaw@<VPS1_IP> "sudo docker ps --format '{{.Names}}: {{.Status}}' && echo && sudo wg show wg0 | head -3" && \
 echo && echo "=== VPS-2 Health ===" && \
-ssh -p 222 openclaw@<VPS2_IP> "docker ps --format '{{.Names}}: {{.Status}}' && curl -s http://localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | \"\(.labels.job): \(.health)\"'"
+ssh -p 222 adminclaw@<VPS2_IP> "sudo docker ps --format '{{.Names}}: {{.Status}}' && curl -s http://127.0.0.1:9090/api/v1/targets | jq -r '.data.activeTargets[] | \"\(.labels.job): \(.health)\"'"
 ```
 
 ---

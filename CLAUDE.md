@@ -589,8 +589,10 @@ GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
 # Docker compose variables (required by repo's docker-compose.yml)
 OPENCLAW_CONFIG_DIR=/home/openclaw/.openclaw
 OPENCLAW_WORKSPACE_DIR=/home/openclaw/.openclaw/workspace
-OPENCLAW_GATEWAY_PORT=127.0.0.1:18789
-OPENCLAW_BRIDGE_PORT=127.0.0.1:18790
+# IMPORTANT: Bind to 0.0.0.0 to allow Prometheus scraping via WireGuard (10.0.0.x)
+# Using 127.0.0.1 would block metrics collection from VPS-2
+OPENCLAW_GATEWAY_PORT=0.0.0.0:18789
+OPENCLAW_BRIDGE_PORT=0.0.0.0:18790
 OPENCLAW_GATEWAY_BIND=lan
 EOF
 
@@ -893,8 +895,9 @@ EOF
 
 ```bash
 #!/bin/bash
-# IMPORTANT: Use host network mode for prometheus, alertmanager, and cadvisor
-# to access WireGuard network (10.0.0.x)
+# SECURITY: All services use host network but bind to localhost where possible
+# Only Loki needs WireGuard access (receives logs from VPS-1 Promtail)
+# Prometheus makes OUTBOUND connections to WireGuard, doesn't need to listen on it
 sudo -u openclaw tee /home/openclaw/monitoring/docker-compose.yml << 'EOF'
 services:
   prometheus:
@@ -910,7 +913,8 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
-    # IMPORTANT: Use host network to reach WireGuard IPs
+      # SECURITY: Bind to localhost only - accessed by Grafana, not externally
+      - "--web.listen-address=127.0.0.1:9090"
     network_mode: host
 
   grafana:
@@ -927,10 +931,9 @@ services:
       # Serve Grafana under subpath to avoid bot scanners
       - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN:-localhost}/_observe/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
-    ports:
-      - "127.0.0.1:3000:3000"
-    networks:
-      - monitoring-net
+      # SECURITY: Bind to localhost only - Caddy handles external access
+      - GF_SERVER_HTTP_ADDR=127.0.0.1
+    network_mode: host
 
   loki:
     image: grafana/loki:latest
@@ -940,10 +943,9 @@ services:
       - ./loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
     command: -config.file=/etc/loki/local-config.yaml
-    ports:
-      - "10.0.0.2:3100:3100"
-    networks:
-      - monitoring-net
+    # NOTE: Loki needs WireGuard access - Promtail on VPS-1 pushes logs to 10.0.0.2:3100
+    # Binding configured in loki-config.yml to listen on both localhost and WireGuard
+    network_mode: host
 
   alertmanager:
     image: prom/alertmanager:latest
@@ -955,7 +957,8 @@ services:
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
-    # IMPORTANT: Use host network for Prometheus access
+      # SECURITY: Bind to localhost only - accessed by Prometheus, not externally
+      - "--web.listen-address=127.0.0.1:9093"
     network_mode: host
 
   node-exporter:
@@ -966,6 +969,8 @@ services:
       - "--path.procfs=/host/proc"
       - "--path.sysfs=/host/sys"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+      # SECURITY: Bind to localhost only - scraped by local Prometheus
+      - "--web.listen-address=127.0.0.1:9100"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -976,18 +981,18 @@ services:
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: cadvisor
     restart: unless-stopped
+    # SECURITY: Bind to localhost only - scraped by local Prometheus
+    command:
+      - "--listen_ip=127.0.0.1"
+      - "--port=8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-    # IMPORTANT: Use host network for Prometheus access
     network_mode: host
 
-networks:
-  monitoring-net:
-    driver: bridge
-
+# No custom networks needed - all services use host network with localhost binding
 volumes:
   prometheus_data:
   grafana_data:
@@ -1000,8 +1005,8 @@ EOF
 
 ```bash
 #!/bin/bash
-# IMPORTANT: Since Prometheus runs on host network, use localhost for local services
-# and 10.0.0.1 for VPS-1 metrics via WireGuard
+# Local services bound to 127.0.0.1 for security
+# VPS-1 metrics accessed via WireGuard (10.0.0.1)
 sudo -u openclaw tee /home/openclaw/monitoring/prometheus.yml << 'EOF'
 global:
   scrape_interval: 15s
@@ -1010,7 +1015,7 @@ global:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: ["localhost:9093"]
+        - targets: ["127.0.0.1:9093"]
 
 rule_files:
   - alerts.yml
@@ -1018,18 +1023,18 @@ rule_files:
 scrape_configs:
   - job_name: "prometheus"
     static_configs:
-      - targets: ["localhost:9090"]
+      - targets: ["127.0.0.1:9090"]
 
-  # Local VPS-2 metrics
+  # Local VPS-2 metrics (bound to 127.0.0.1 for security)
   - job_name: "node-exporter-local"
     static_configs:
-      - targets: ["localhost:9100"]
+      - targets: ["127.0.0.1:9100"]
         labels:
           host: "observe"
 
   - job_name: "cadvisor-local"
     static_configs:
-      - targets: ["localhost:8080"]
+      - targets: ["127.0.0.1:8080"]
         labels:
           host: "observe"
 
@@ -1123,11 +1128,17 @@ EOF
 ```bash
 #!/bin/bash
 # IMPORTANT: Use schema v13 with tsdb store (required by newer Loki versions)
+# SECURITY: Loki binds to WireGuard IP (10.0.0.2) for Promtail access from VPS-1
 sudo -u openclaw tee /home/openclaw/monitoring/loki-config.yml << 'EOF'
 auth_enabled: false
 
 server:
+  # SECURITY: Bind to WireGuard IP - receives logs from VPS-1 Promtail
+  # IMPORTANT: Both HTTP and gRPC must be on same interface (10.0.0.2) for internal
+  # component communication. Using different interfaces causes "connection refused" errors.
+  http_listen_address: 10.0.0.2
   http_listen_port: 3100
+  grpc_listen_address: 10.0.0.2
   grpc_listen_port: 9096
 
 common:
@@ -1138,7 +1149,8 @@ common:
       rules_directory: /loki/rules
   replication_factor: 1
   ring:
-    instance_addr: 127.0.0.1
+    # Must match the listen addresses for internal communication
+    instance_addr: 10.0.0.2
     kvstore:
       store: inmemory
 
@@ -1153,7 +1165,7 @@ schema_config:
         period: 24h
 
 ruler:
-  alertmanager_url: http://localhost:9093
+  alertmanager_url: http://127.0.0.1:9093
 
 limits_config:
   retention_period: 720h
@@ -1164,7 +1176,8 @@ EOF
 
 ```bash
 #!/bin/bash
-# IMPORTANT: Use localhost URLs since services run on host network
+# Prometheus: localhost (bound to 127.0.0.1)
+# Loki: WireGuard IP (bound to 10.0.0.2 for security - same host, still accessible)
 sudo -u openclaw tee /home/openclaw/monitoring/grafana/provisioning/datasources/datasources.yml << 'EOF'
 apiVersion: 1
 
@@ -1172,14 +1185,16 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://localhost:9090
+    url: http://127.0.0.1:9090
     isDefault: true
     editable: false
 
   - name: Loki
     type: loki
     access: proxy
-    url: http://localhost:3100
+    # Loki binds to WireGuard IP for security (only accepts connections from VPS-1 Promtail)
+    # Grafana on same host can still reach it via this IP
+    url: http://10.0.0.2:3100
     editable: false
 EOF
 ```
@@ -1235,12 +1250,20 @@ sudo tee /etc/caddy/Caddyfile << 'EOF'
         -Server
     }
 
-    # Grafana under obscured path to avoid bot scanners
-    handle_path /_observe/grafana/* {
+    # CRITICAL: Use "handle" NOT "handle_path" for Grafana
+    # handle_path strips the path prefix, causing redirect loops when Grafana
+    # is configured with GF_SERVER_ROOT_URL and GF_SERVER_SERVE_FROM_SUB_PATH=true
+    # With handle, the full path /_observe/grafana/... is preserved and passed to Grafana
+    handle /_observe/grafana/* {
         reverse_proxy localhost:3000 {
             header_up Host {host}
             header_up X-Real-IP {remote}
         }
+    }
+
+    # Handle requests to /_observe/grafana without trailing slash
+    handle /_observe/grafana {
+        redir /_observe/grafana/ permanent
     }
 
     # Redirect root to Grafana (optional - remove if you want 404 on root)
@@ -1307,7 +1330,11 @@ echo "========================================="
 
 ```bash
 #!/bin/bash
-sudo -u openclaw tee /home/openclaw/scripts/backup.sh << 'EOF'
+# IMPORTANT: Backup script must run as root because:
+# - .openclaw directory is owned by uid 1000 (container's node user)
+# - openclaw user on host is uid 1002 (different from container user)
+# - Only root can reliably read/write to uid 1000 owned directories
+sudo tee /home/openclaw/scripts/backup.sh << 'EOF'
 #!/bin/bash
 set -euo pipefail
 
@@ -1315,6 +1342,10 @@ BACKUP_DIR="/home/openclaw/.openclaw/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="${BACKUP_DIR}/openclaw_backup_${TIMESTAMP}.tar.gz"
 RETENTION_DAYS=30
+
+# Ensure backup directory exists with correct permissions
+mkdir -p "${BACKUP_DIR}"
+chown 1000:1000 "${BACKUP_DIR}"
 
 # Create backup
 tar -czf "${BACKUP_FILE}" \
@@ -1324,6 +1355,9 @@ tar -czf "${BACKUP_FILE}" \
     .openclaw/workspace \
     openclaw/.env \
     2>/dev/null || true
+
+# Set ownership so container can also access backups if needed
+chown 1000:1000 "${BACKUP_FILE}"
 
 # Verify
 if tar -tzf "${BACKUP_FILE}" > /dev/null 2>&1; then
@@ -1337,14 +1371,25 @@ fi
 find "${BACKUP_DIR}" -name "openclaw_backup_*.tar.gz" -mtime +${RETENTION_DAYS} -delete
 EOF
 
-sudo -u openclaw chmod +x /home/openclaw/scripts/backup.sh
+sudo chmod +x /home/openclaw/scripts/backup.sh
 ```
 
 ### 6.2 Schedule Cron Job
 
 ```bash
 #!/bin/bash
-sudo -u openclaw bash -c '(crontab -l 2>/dev/null; echo "0 3 * * * /home/openclaw/scripts/backup.sh >> /home/openclaw/.openclaw/logs/backup.log 2>&1") | crontab -'
+# IMPORTANT: Use /etc/cron.d instead of user crontab because backup runs as root
+# This avoids permission issues with uid 1000 owned directories
+sudo tee /etc/cron.d/openclaw-backup << 'EOF'
+# OpenClaw daily backup - runs as root to access uid 1000 owned directories
+0 3 * * * root /home/openclaw/scripts/backup.sh >> /home/openclaw/.openclaw/logs/backup.log 2>&1
+EOF
+
+sudo chmod 644 /etc/cron.d/openclaw-backup
+
+# Ensure log directory exists
+sudo mkdir -p /home/openclaw/.openclaw/logs
+sudo chown 1000:1000 /home/openclaw/.openclaw/logs
 ```
 
 ---
@@ -1592,6 +1637,64 @@ sudo systemctl restart ssh    # Correct
 sudo systemctl restart sshd   # Wrong - will fail
 ```
 
+### Grafana Redirect Loop (ERR_TOO_MANY_REDIRECTS)
+
+```bash
+# Symptom: Browser shows "too many redirects" when accessing /_observe/grafana/
+# Cause: Caddy using handle_path instead of handle
+
+# WRONG - strips path prefix, causes redirect loop:
+handle_path /_observe/grafana/* {
+    reverse_proxy localhost:3000
+}
+
+# CORRECT - preserves full path:
+handle /_observe/grafana/* {
+    reverse_proxy localhost:3000
+}
+
+# Why: Grafana with GF_SERVER_SERVE_FROM_SUB_PATH=true expects requests
+# at /_observe/grafana/..., but handle_path strips the prefix and sends /...
+# Grafana then redirects back to /_observe/grafana/, creating a loop
+```
+
+### Grafana Datasource Connection Refused
+
+```bash
+# Symptom: Grafana shows "connection refused" when testing Prometheus datasource
+# Cause: Grafana on bridge network can't reach Prometheus on host network via localhost
+
+# Check network modes:
+docker inspect grafana --format '{{.HostConfig.NetworkMode}}'
+docker inspect prometheus --format '{{.HostConfig.NetworkMode}}'
+
+# Solution: ALL monitoring services must use network_mode: host
+# Mixed networking doesn't work - containers on different networks can't communicate
+
+# After fixing docker-compose.yml:
+cd /home/openclaw/monitoring
+sudo -u openclaw docker compose down
+sudo -u openclaw docker compose up -d
+
+# Verify datasource:
+curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].health'
+```
+
+### Backup Script Permission Denied
+
+```bash
+# Symptom: Backup cron job fails with permission denied
+# Cause: .openclaw owned by uid 1000, but openclaw user is uid 1002
+
+# Check ownership:
+ls -la /home/openclaw/.openclaw/
+# Shows: drwx------ 1000 1000 ... (container's node user, NOT host's openclaw)
+
+# Solution: Run backup as root via /etc/cron.d (not user crontab)
+cat /etc/cron.d/openclaw-backup
+# Should show: 0 3 * * * root /home/openclaw/scripts/backup.sh ...
+```
+
 ---
 
 ## Key Deployment Notes
@@ -1631,3 +1734,23 @@ sudo systemctl restart sshd   # Wrong - will fail
     - `tmpfs` mounts provide writable `/tmp`, `/var/tmp`, `/run` directories
     - `user: "1000:1000"` runs container as non-root (node user)
     - Gateway writes logs to `/tmp/openclaw/` which is on tmpfs mount
+16. **VPS-2 monitoring services - networking and security**:
+    - ALL services use `network_mode: host` for reliable inter-service communication
+    - **Security hardening**: Services bind to localhost except Loki (needs WireGuard)
+    - Prometheus: `--web.listen-address=127.0.0.1:9090`
+    - Grafana: `GF_SERVER_HTTP_ADDR=127.0.0.1`
+    - Alertmanager: `--web.listen-address=127.0.0.1:9093`
+    - Node Exporter: `--web.listen-address=127.0.0.1:9100`
+    - cAdvisor: `--listen_ip=127.0.0.1`
+    - Loki: `http_listen_address: 10.0.0.2` (WireGuard only - receives logs from VPS-1)
+    - Grafana datasource for Loki uses `http://10.0.0.2:3100` (same host, still accessible)
+17. **Caddy reverse proxy for Grafana - handle vs handle_path**:
+    - Use `handle /_observe/grafana/*` NOT `handle_path /_observe/grafana/*`
+    - `handle_path` strips the path prefix before forwarding to backend
+    - This causes redirect loops when Grafana has `GF_SERVER_SERVE_FROM_SUB_PATH=true`
+    - `handle` preserves the full path, which Grafana expects
+18. **Backup script permissions**:
+    - Backup script runs as root via `/etc/cron.d/openclaw-backup`
+    - Cannot use openclaw user's crontab because `.openclaw` dir is owned by uid 1000
+    - The openclaw user on host is uid 1002 (different from container's node user)
+    - Root can access both uid 1000 and 1002 owned files

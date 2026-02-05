@@ -255,12 +255,18 @@ You're now ready for Claude Code to automate the rest. Provide Claude Code with:
 
 ### SSH Commands
 
-```bash
-# SSH to OpenClaw VPS
-ssh -i ~/.ssh/openclaw_ed25519 ubuntu@<VPS-1-IP>
+**Note**: After deployment, SSH uses port 222 (not 22). During initial setup, use the default port 22.
 
-# SSH to Observability VPS
-ssh -i ~/.ssh/openclaw_ed25519 ubuntu@<VPS-2-IP>
+```bash
+# SSH to OpenClaw VPS (before deployment - default port 22)
+ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-1-IP>
+
+# SSH to Observability VPS (before deployment - default port 22)
+ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-2-IP>
+
+# After deployment - use port 222 and openclaw user
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-1-IP>
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-2-IP>
 ```
 
 ### OVHCloud Control Panel Links

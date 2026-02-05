@@ -2,6 +2,18 @@
 
 This document provides comprehensive testing instructions for verifying an existing OpenClaw two-VPS deployment is working correctly.
 
+## Security Configuration Summary
+
+Before testing, note these security configurations:
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| **SSH Port** | 222 (not 22) | Avoid bot scanners |
+| **OpenClaw Path** | `/_openclaw/` | Obscured URL |
+| **Grafana Path** | `/_observe/grafana/` | Obscured URL |
+| **HTTP Port 80** | Blocked | HTTPS-only |
+| **HTTP Port 22** | Blocked | SSH on 222 |
+
 ---
 
 ## For Claude Code Agents
@@ -31,12 +43,14 @@ Extract these values:
 
 #### 1.1 SSH Access
 
-```bash
-# Test SSH to VPS-1 (OpenClaw)
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -o ConnectTimeout=10 openclaw@<VPS1_IP> "echo 'VPS-1 SSH OK'"
+**Important**: SSH uses port 222 (not 22) to avoid bot scanners.
 
-# Test SSH to VPS-2 (Observability)
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -o ConnectTimeout=10 openclaw@<VPS2_IP> "echo 'VPS-2 SSH OK'"
+```bash
+# Test SSH to VPS-1 (OpenClaw) - note port 222
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 -o ConnectTimeout=10 openclaw@<VPS1_IP> "echo 'VPS-1 SSH OK'"
+
+# Test SSH to VPS-2 (Observability) - note port 222
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 -o ConnectTimeout=10 openclaw@<VPS2_IP> "echo 'VPS-2 SSH OK'"
 ```
 
 **Success criteria**: Both commands return "OK" messages without errors.
@@ -45,10 +59,10 @@ ssh -i ~/.ssh/ovh_openclaw_ed25519 -o ConnectTimeout=10 openclaw@<VPS2_IP> "echo
 
 ```bash
 # On VPS-1: Check tunnel status and connectivity
-ssh openclaw@<VPS1_IP> "sudo wg show && ping -c 3 10.0.0.2"
+ssh -p 222 openclaw@<VPS1_IP> "sudo wg show && ping -c 3 10.0.0.2"
 
 # On VPS-2: Check tunnel status and connectivity
-ssh openclaw@<VPS2_IP> "sudo wg show && ping -c 3 10.0.0.1"
+ssh -p 222 openclaw@<VPS2_IP> "sudo wg show && ping -c 3 10.0.0.1"
 ```
 
 **Success criteria**:
@@ -58,22 +72,23 @@ ssh openclaw@<VPS2_IP> "sudo wg show && ping -c 3 10.0.0.1"
 #### 1.3 Port Accessibility (Security Check)
 
 ```bash
-# Test that only HTTPS (443) is accessible from public internet
-# Port 80 should redirect or be blocked
-# Port 22 should be accessible for SSH
+# Test that only HTTPS (443) and SSH (222) are accessible from public internet
+# Port 80 should be blocked (not allowed)
+# Port 22 should be blocked (SSH is on 222)
 
 # On VPS-1
-ssh openclaw@<VPS1_IP> "sudo ufw status"
+ssh -p 222 openclaw@<VPS1_IP> "sudo ufw status"
 
 # On VPS-2
-ssh openclaw@<VPS2_IP> "sudo ufw status"
+ssh -p 222 openclaw@<VPS2_IP> "sudo ufw status"
 ```
 
 **Success criteria**:
-- Port 22/tcp: ALLOW
-- Port 443/tcp: ALLOW
-- Port 80/tcp: ALLOW (Caddy redirects to HTTPS)
+- Port 222/tcp: ALLOW (SSH on non-standard port)
+- Port 443/tcp: ALLOW (HTTPS)
 - Port 51820/udp: ALLOW (WireGuard)
+- Port 22/tcp: NOT listed (blocked)
+- Port 80/tcp: NOT listed (blocked)
 - Default: deny incoming
 
 ---
@@ -83,7 +98,7 @@ ssh openclaw@<VPS2_IP> "sudo ufw status"
 #### 2.1 VPS-1 Docker Services
 
 ```bash
-ssh openclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
+ssh -p 222 openclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
 ```
 
 **Expected services**:
@@ -94,7 +109,7 @@ ssh openclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose ps --format
 #### 2.2 VPS-1 Caddy Reverse Proxy
 
 ```bash
-ssh openclaw@<VPS1_IP> "docker ps --filter name=caddy --format 'table {{.Names}}\t{{.Status}}'"
+ssh -p 222 openclaw@<VPS1_IP> "docker ps --filter name=caddy --format 'table {{.Names}}\t{{.Status}}'"
 ```
 
 **Success criteria**: Caddy container is running.
@@ -102,7 +117,7 @@ ssh openclaw@<VPS1_IP> "docker ps --filter name=caddy --format 'table {{.Names}}
 #### 2.3 VPS-2 Docker Services
 
 ```bash
-ssh openclaw@<VPS2_IP> "cd /home/openclaw/monitoring && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
+ssh -p 222 openclaw@<VPS2_IP> "cd /home/openclaw/monitoring && docker compose ps --format 'table {{.Name}}\t{{.Status}}'"
 ```
 
 **Expected services**:
@@ -116,7 +131,7 @@ ssh openclaw@<VPS2_IP> "cd /home/openclaw/monitoring && docker compose ps --form
 #### 2.4 VPS-2 Caddy Reverse Proxy
 
 ```bash
-ssh openclaw@<VPS2_IP> "docker ps --filter name=caddy --format 'table {{.Names}}\t{{.Status}}'"
+ssh -p 222 openclaw@<VPS2_IP> "docker ps --filter name=caddy --format 'table {{.Names}}\t{{.Status}}'"
 ```
 
 **Success criteria**: Caddy container is running.
@@ -128,7 +143,7 @@ ssh openclaw@<VPS2_IP> "docker ps --filter name=caddy --format 'table {{.Names}}
 #### 3.1 Check for Permission Errors on VPS-1
 
 ```bash
-ssh openclaw@<VPS1_IP> "sudo journalctl -p err -n 50 --no-pager"
+ssh -p 222 openclaw@<VPS1_IP> "sudo journalctl -p err -n 50 --no-pager"
 ```
 
 **Success criteria**: No permission-related errors for openclaw-gateway container.
@@ -136,7 +151,7 @@ ssh openclaw@<VPS1_IP> "sudo journalctl -p err -n 50 --no-pager"
 #### 3.2 Check for Permission Errors on VPS-2
 
 ```bash
-ssh openclaw@<VPS2_IP> "sudo journalctl -p err -n 50 --no-pager"
+ssh -p 222 openclaw@<VPS2_IP> "sudo journalctl -p err -n 50 --no-pager"
 ```
 
 **Success criteria**: No critical errors related to monitoring stack.
@@ -144,7 +159,7 @@ ssh openclaw@<VPS2_IP> "sudo journalctl -p err -n 50 --no-pager"
 #### 3.3 Check OpenClaw Gateway Logs
 
 ```bash
-ssh openclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose logs --tail 50 openclaw-gateway"
+ssh -p 222 openclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose logs --tail 50 openclaw-gateway"
 ```
 
 **Success criteria**: No error messages, gateway is listening on expected port.
@@ -157,9 +172,11 @@ Use the Chrome DevTools MCP to test the web interfaces.
 
 #### 4.1 Test OpenClaw Admin Interface
 
+**Important**: Services use obscured paths to avoid bot scanners.
+
 ```
-# Navigate to OpenClaw admin page
-mcp__chrome-devtools__navigate_page(url="https://claw.ventureunknown.com/_admin")
+# Navigate to OpenClaw admin page (note: /_openclaw/_admin path)
+mcp__chrome-devtools__navigate_page(url="https://claw.ventureunknown.com/_openclaw/_admin")
 
 # Take a snapshot to verify the page loaded
 mcp__chrome-devtools__take_snapshot()
@@ -173,8 +190,8 @@ mcp__chrome-devtools__take_snapshot()
 #### 4.2 Test Grafana Interface
 
 ```
-# Navigate to Grafana
-mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com")
+# Navigate to Grafana (note: /_observe/grafana/ path)
+mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com/_observe/grafana/")
 
 # Take a snapshot
 mcp__chrome-devtools__take_snapshot()
@@ -194,15 +211,21 @@ mcp__chrome-devtools__list_console_messages(types=["error"])
 
 **Success criteria**: No SSL certificate errors.
 
-#### 4.4 Verify HTTPS-Only Access
+#### 4.4 Verify HTTPS-Only Access and 404 on Root
 
 ```
-# Try HTTP - should redirect to HTTPS
-mcp__chrome-devtools__navigate_page(url="http://claw.ventureunknown.com")
+# Try root path - should redirect to /_openclaw/ or return 404
+mcp__chrome-devtools__navigate_page(url="https://claw.ventureunknown.com/")
+mcp__chrome-devtools__take_snapshot()
+
+# Try random path - should return 404
+mcp__chrome-devtools__navigate_page(url="https://claw.ventureunknown.com/random-path")
 mcp__chrome-devtools__take_snapshot()
 ```
 
-**Success criteria**: Redirects to HTTPS URL.
+**Success criteria**:
+- Root redirects to `/_openclaw/` or obscured path
+- Random paths return 404 (not proxied to backend)
 
 ---
 
@@ -211,7 +234,7 @@ mcp__chrome-devtools__take_snapshot()
 #### 5.1 Prometheus Targets
 
 ```bash
-ssh openclaw@<VPS2_IP> "curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'"
+ssh -p 222 openclaw@<VPS2_IP> "curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'"
 ```
 
 **Success criteria**: All targets show `"health": "up"`:
@@ -224,7 +247,7 @@ ssh openclaw@<VPS2_IP> "curl -s http://localhost:9090/api/v1/targets | jq '.data
 #### 5.2 Loki Health
 
 ```bash
-ssh openclaw@<VPS2_IP> "curl -s http://localhost:3100/ready"
+ssh -p 222 openclaw@<VPS2_IP> "curl -s http://localhost:3100/ready"
 ```
 
 **Success criteria**: Returns "ready".
@@ -233,7 +256,7 @@ ssh openclaw@<VPS2_IP> "curl -s http://localhost:3100/ready"
 
 ```bash
 # Check if logs from VPS-1 are appearing in Loki
-ssh openclaw@<VPS2_IP> "curl -s 'http://localhost:3100/loki/api/v1/query?query={host=\"openclaw\"}' | jq '.data.result | length'"
+ssh -p 222 openclaw@<VPS2_IP> "curl -s 'http://localhost:3100/loki/api/v1/query?query={host=\"openclaw\"}' | jq '.data.result | length'"
 ```
 
 **Success criteria**: Returns a number > 0 (indicates logs are being received).
@@ -247,14 +270,14 @@ ssh openclaw@<VPS2_IP> "curl -s 'http://localhost:3100/loki/api/v1/query?query={
 First, get the Grafana password:
 
 ```bash
-ssh openclaw@<VPS2_IP> "cat /home/openclaw/monitoring/.env | grep GRAFANA_PASSWORD"
+ssh -p 222 openclaw@<VPS2_IP> "cat /home/openclaw/monitoring/.env | grep GRAFANA_PASSWORD"
 ```
 
 Then use DevTools to test:
 
 ```
-# Navigate to Grafana
-mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com/login")
+# Navigate to Grafana login (note: /_observe/grafana/ path)
+mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com/_observe/grafana/login")
 mcp__chrome-devtools__take_snapshot()
 
 # Fill login form (adjust uids based on snapshot)
@@ -266,8 +289,8 @@ mcp__chrome-devtools__click(uid="<login-button-uid>")
 #### 6.2 Navigate to Explore and Check Loki
 
 ```
-# Navigate to Explore page
-mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com/explore")
+# Navigate to Explore page (note: /_observe/grafana/ path)
+mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com/_observe/grafana/explore")
 mcp__chrome-devtools__take_snapshot()
 
 # Select Loki datasource and run a query
@@ -308,13 +331,13 @@ After running all tests, compile results:
 
 ## Quick Test Command
 
-For a rapid health check, run this single command:
+For a rapid health check, run this single command (note: SSH uses port 222):
 
 ```bash
 echo "=== VPS-1 Health ===" && \
-ssh openclaw@<VPS1_IP> "docker ps --format '{{.Names}}: {{.Status}}' && echo && sudo wg show wg0 | head -3" && \
+ssh -p 222 openclaw@<VPS1_IP> "docker ps --format '{{.Names}}: {{.Status}}' && echo && sudo wg show wg0 | head -3" && \
 echo && echo "=== VPS-2 Health ===" && \
-ssh openclaw@<VPS2_IP> "docker ps --format '{{.Names}}: {{.Status}}' && curl -s http://localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | \"\(.labels.job): \(.health)\"'"
+ssh -p 222 openclaw@<VPS2_IP> "docker ps --format '{{.Names}}: {{.Status}}' && curl -s http://localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | \"\(.labels.job): \(.health)\"'"
 ```
 
 ---

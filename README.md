@@ -112,13 +112,13 @@ In Cloudflare Dashboard → **DNS**:
 ### Access OpenClaw Dashboard
 
 1. Navigate to your OpenClaw URL:
-   - With domain: `https://claw.yourdomain.com/_admin`
-   - Without domain: `https://<VPS-1-IP>/_admin`
+   - With domain: `https://claw.yourdomain.com/_openclaw/_admin`
+   - Without domain: `https://<VPS-1-IP>/_openclaw/_admin`
 
 2. **Important**: You need the gateway token to access the admin interface:
    ```bash
-   # SSH to VPS-1 and get the token
-   ssh -i ~/.ssh/ovh_openclaw_ed25519 openclaw@<VPS-1-IP>
+   # SSH to VPS-1 and get the token (note: SSH uses port 222)
+   ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-1-IP>
    cat /home/openclaw/openclaw/.env | grep OPENCLAW_GATEWAY_TOKEN
    ```
 
@@ -127,13 +127,13 @@ In Cloudflare Dashboard → **DNS**:
 ### Access Grafana
 
 1. Navigate to your Grafana URL:
-   - With domain: `https://observe.yourdomain.com`
-   - Without domain: `https://<VPS-2-IP>`
+   - With domain: `https://observe.yourdomain.com/_observe/grafana/`
+   - Without domain: `https://<VPS-2-IP>/_observe/grafana/`
 
 2. Get the Grafana password:
    ```bash
-   # SSH to VPS-2 and get the password
-   ssh -i ~/.ssh/ovh_openclaw_ed25519 openclaw@<VPS-2-IP>
+   # SSH to VPS-2 and get the password (note: SSH uses port 222)
+   ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-2-IP>
    cat /home/openclaw/monitoring/.env | grep GRAFANA_PASSWORD
    ```
 
@@ -159,29 +159,29 @@ After deployment, verify everything is working:
 ### Quick Health Checks
 
 ```bash
-# Check OpenClaw health endpoint
-curl -k https://<VPS-1-IP>/health
+# Check OpenClaw health endpoint (via obscured path)
+curl -k https://<VPS-1-IP>/_openclaw/health
 
-# Check Grafana is responding
-curl -k https://<VPS-2-IP>/api/health
+# Check Grafana is responding (via obscured path)
+curl -k https://<VPS-2-IP>/_observe/grafana/api/health
 ```
 
 ### Service Status
 
 ```bash
-# On VPS-1
-ssh openclaw@<VPS-1-IP> "cd /home/openclaw/openclaw && docker compose ps"
+# On VPS-1 (SSH port 222)
+ssh -p 222 openclaw@<VPS-1-IP> "cd /home/openclaw/openclaw && docker compose ps"
 
-# On VPS-2
-ssh openclaw@<VPS-2-IP> "cd /home/openclaw/monitoring && docker compose ps"
+# On VPS-2 (SSH port 222)
+ssh -p 222 openclaw@<VPS-2-IP> "cd /home/openclaw/monitoring && docker compose ps"
 ```
 
 ### WireGuard Tunnel
 
 ```bash
-# On VPS-1
-ssh openclaw@<VPS-1-IP> "sudo wg show"
-ssh openclaw@<VPS-1-IP> "ping -c 3 10.0.0.2"
+# On VPS-1 (SSH port 222)
+ssh -p 222 openclaw@<VPS-1-IP> "sudo wg show"
+ssh -p 222 openclaw@<VPS-1-IP> "ping -c 3 10.0.0.2"
 ```
 
 For comprehensive testing, see **[docs/TESTING.md](./docs/TESTING.md)**.
@@ -209,7 +209,7 @@ openclaw-vps/
 
 ### Can't Access OpenClaw Admin
 
-- Ensure you're using the correct URL with `/_admin` path
+- Ensure you're using the correct URL: `/_openclaw/_admin` (not just `/_admin`)
 - Verify the gateway token is correct
 - Check that Caddy is running: `docker ps | grep caddy`
 
@@ -250,6 +250,12 @@ sudo ufw status | grep 51820
 
 ## Security Notes
 
+- **SSH uses port 222** (not 22) to avoid bot scanners - always use `-p 222`
+- **SSH key-only** - password authentication is disabled
+- **Openclaw user** has passwordless sudo for automation - remember the password you set during setup for console access
+- **Obscured URL paths**: Services use non-standard paths to avoid bot scanners:
+  - OpenClaw: `/_openclaw/` (admin at `/_openclaw/_admin`)
+  - Grafana: `/_observe/grafana/`
 - Gateway token should be kept secret - it provides admin access
 - SSL certificates and private keys are sensitive - never commit to git
 - The `.gitignore` excludes `*.env` and `certs/` by default

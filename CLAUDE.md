@@ -52,6 +52,8 @@ sudo apt install -y \
 
 ### 1.2 Create Dedicated User
 
+**IMPORTANT**: You will be prompted to set a password for the openclaw user. Remember this password - you may need it for sudo or console access.
+
 ```bash
 #!/bin/bash
 OPENCLAW_USER="openclaw"
@@ -59,13 +61,17 @@ OPENCLAW_USER="openclaw"
 # Create user
 sudo useradd -m -s /bin/bash "$OPENCLAW_USER"
 
-# Generate random password (user won't need it, SSH key auth only)
-echo "${OPENCLAW_USER}:$(openssl rand -base64 32)" | sudo chpasswd
+# Set password interactively - REMEMBER THIS PASSWORD
+sudo passwd "$OPENCLAW_USER"
 
-# Add to sudo and docker groups
+# Add to sudo group
 sudo usermod -aG sudo "$OPENCLAW_USER"
 
-# Copy SSH authorized_keys
+# Grant passwordless sudo for automation (required for Claude Code to manage the server)
+echo "${OPENCLAW_USER} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/${OPENCLAW_USER}
+sudo chmod 440 /etc/sudoers.d/${OPENCLAW_USER}
+
+# Copy SSH authorized_keys from current user
 sudo mkdir -p /home/${OPENCLAW_USER}/.ssh
 sudo cp ~/.ssh/authorized_keys /home/${OPENCLAW_USER}/.ssh/
 sudo chown -R ${OPENCLAW_USER}:${OPENCLAW_USER} /home/${OPENCLAW_USER}/.ssh
@@ -73,47 +79,9 @@ sudo chmod 700 /home/${OPENCLAW_USER}/.ssh
 sudo chmod 600 /home/${OPENCLAW_USER}/.ssh/authorized_keys
 ```
 
-### 1.3 SSH Hardening
+### 1.3 UFW Firewall Setup (Run BEFORE SSH Hardening)
 
-```bash
-#!/bin/bash
-# Backup original config
-sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
-
-# Create hardened config
-sudo tee /etc/ssh/sshd_config.d/hardening.conf << 'EOF'
-# Disable root login
-PermitRootLogin no
-
-# Disable password authentication
-PasswordAuthentication no
-ChallengeResponseAuthentication no
-UsePAM yes
-
-# Only allow specific user
-AllowUsers openclaw ubuntu
-
-# Connection settings
-MaxAuthTries 3
-MaxSessions 3
-LoginGraceTime 30
-
-# Disable unused features
-X11Forwarding no
-AllowTcpForwarding no
-AllowAgentForwarding no
-
-# Use strong algorithms only
-KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
-Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
-MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
-EOF
-
-# IMPORTANT: Ubuntu uses 'ssh' not 'sshd' as service name
-sudo systemctl restart ssh
-```
-
-### 1.4 UFW Firewall Setup
+**IMPORTANT**: Configure the firewall FIRST to allow port 222, then apply SSH hardening. This prevents lockout.
 
 **On VPS-1 (OpenClaw):**
 
@@ -122,8 +90,9 @@ sudo systemctl restart ssh
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 
-# SSH
+# SSH - allow BOTH ports during transition (remove port 22 after verifying 222 works)
 sudo ufw allow 22/tcp
+sudo ufw allow 222/tcp
 
 # HTTPS only (port 80 blocked for security - use Cloudflare Origin CA)
 sudo ufw allow 443/tcp
@@ -146,8 +115,9 @@ sudo ufw --force enable
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 
-# SSH
+# SSH - allow BOTH ports during transition (remove port 22 after verifying 222 works)
 sudo ufw allow 22/tcp
+sudo ufw allow 222/tcp
 
 # HTTPS only (port 80 blocked for security - use Cloudflare Origin CA)
 sudo ufw allow 443/tcp
@@ -159,7 +129,91 @@ sudo ufw allow 51820/udp
 sudo ufw --force enable
 ```
 
-### 1.5 Fail2ban Configuration
+---
+
+### 1.4 SSH Hardening (Run AFTER UFW is configured)
+
+**IMPORTANT**: Ubuntu uses systemd socket activation for SSH. To change the SSH port, you must update BOTH the socket AND the sshd config.
+
+```bash
+#!/bin/bash
+# Backup original config
+sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+
+# Create hardened sshd config
+sudo tee /etc/ssh/sshd_config.d/hardening.conf << 'EOF'
+# Use non-standard port to avoid bot scanners
+# NOTE: The systemd socket override (below) also sets this port
+Port 222
+
+# Disable root login
+PermitRootLogin no
+
+# Disable password authentication - SSH keys only
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
+
+# IMPORTANT: Keep UsePAM yes on Ubuntu - required for proper authentication
+UsePAM yes
+
+# Only allow specific users
+AllowUsers openclaw ubuntu
+
+# Connection settings
+MaxAuthTries 3
+MaxSessions 3
+LoginGraceTime 30
+
+# Disable unused features
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no
+PermitEmptyPasswords no
+PermitUserEnvironment no
+
+# Use strong algorithms only
+KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+EOF
+
+# CRITICAL: Update systemd socket to listen on port 222
+# Ubuntu uses socket activation - the socket controls which port SSH listens on
+sudo mkdir -p /etc/systemd/system/ssh.socket.d
+sudo tee /etc/systemd/system/ssh.socket.d/override.conf << 'EOF'
+[Socket]
+# Clear the default ListenStream (port 22) and set port 222
+ListenStream=
+ListenStream=0.0.0.0:222
+ListenStream=[::]:222
+EOF
+
+# Reload systemd and restart SSH socket and service
+sudo systemctl daemon-reload
+sudo systemctl restart ssh.socket
+sudo systemctl restart ssh
+
+# Verify SSH is listening on port 222
+echo "Verifying SSH is listening on port 222..."
+ss -tlnp | grep 222
+```
+
+### 1.5 Verify SSH Port Change and Remove Port 22
+
+**IMPORTANT**: Test SSH on port 222 BEFORE removing port 22 from the firewall.
+
+```bash
+# From your LOCAL machine, test SSH on port 222
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS_IP> "echo 'Port 222 works!'"
+
+# If successful, SSH back in on port 222 and remove port 22 from UFW
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS_IP>
+sudo ufw delete allow 22/tcp
+sudo ufw status
+```
+
+### 1.6 Fail2ban Configuration
 
 ```bash
 #!/bin/bash
@@ -172,7 +226,7 @@ backend = systemd
 
 [sshd]
 enabled = true
-port = ssh
+port = 222
 filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
@@ -183,7 +237,7 @@ sudo systemctl enable fail2ban
 sudo systemctl restart fail2ban
 ```
 
-### 1.6 Automatic Security Updates
+### 1.7 Automatic Security Updates
 
 ```bash
 #!/bin/bash
@@ -205,7 +259,7 @@ EOF
 sudo systemctl enable unattended-upgrades
 ```
 
-### 1.7 Kernel Hardening
+### 1.8 Kernel Hardening
 
 ```bash
 #!/bin/bash
@@ -705,6 +759,7 @@ sudo mkdir -p /etc/caddy /var/log/caddy
 
 # SSL-only configuration using Cloudflare Origin CA
 # Port 80 is blocked at firewall level - no HTTP at all
+# OpenClaw is served under /_openclaw/ to avoid bot scanners
 sudo tee /etc/caddy/Caddyfile << 'EOF'
 {
     # Disable automatic HTTPS - we're using Cloudflare Origin CA
@@ -717,13 +772,26 @@ sudo tee /etc/caddy/Caddyfile << 'EOF'
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
+        X-Frame-Options "SAMEORIGIN"
         -Server
     }
 
-    reverse_proxy localhost:18789 {
-        header_up Host {host}
-        header_up X-Real-IP {remote}
+    # OpenClaw under obscured path to avoid bot scanners
+    handle_path /_openclaw/* {
+        reverse_proxy localhost:18789 {
+            header_up Host {host}
+            header_up X-Real-IP {remote}
+        }
+    }
+
+    # Redirect root to OpenClaw (optional - remove if you want 404 on root)
+    handle / {
+        redir /_openclaw/ permanent
+    }
+
+    # Return 404 for all other paths
+    handle {
+        respond "Not Found" 404
     }
 
     log {
@@ -817,7 +885,9 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN:-localhost}
+      # Serve Grafana under subpath to avoid bot scanners
+      - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN:-localhost}/_observe/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
     ports:
       - "127.0.0.1:3000:3000"
     networks:
@@ -1109,6 +1179,7 @@ sudo chmod 600 /etc/caddy/certs/origin.key
 sudo mkdir -p /etc/caddy /var/log/caddy
 
 # SSL-only configuration using Cloudflare Origin CA
+# Grafana is served under /_observe/grafana to avoid bot scanners
 sudo tee /etc/caddy/Caddyfile << 'EOF'
 {
     # Disable automatic HTTPS - we're using Cloudflare Origin CA
@@ -1121,13 +1192,26 @@ sudo tee /etc/caddy/Caddyfile << 'EOF'
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
+        X-Frame-Options "SAMEORIGIN"
         -Server
     }
 
-    reverse_proxy localhost:3000 {
-        header_up Host {host}
-        header_up X-Real-IP {remote}
+    # Grafana under obscured path to avoid bot scanners
+    handle_path /_observe/grafana/* {
+        reverse_proxy localhost:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote}
+        }
+    }
+
+    # Redirect root to Grafana (optional - remove if you want 404 on root)
+    handle / {
+        redir /_observe/grafana/ permanent
+    }
+
+    # Return 404 for all other paths
+    handle {
+        respond "Not Found" 404
     }
 
     log {
@@ -1226,6 +1310,32 @@ sudo -u openclaw bash -c '(crontab -l 2>/dev/null; echo "0 3 * * * /home/opencla
 
 ---
 
+## Phase 6.5: Reboot Both VPSs
+
+Before running verification tests, reboot both VPSs to ensure all configuration changes take effect cleanly (especially kernel parameters, SSH config, and systemd services).
+
+**On VPS-1:**
+
+```bash
+sudo reboot
+```
+
+**On VPS-2:**
+
+```bash
+sudo reboot
+```
+
+Wait 1-2 minutes for both VPSs to come back online, then verify SSH access using the new port:
+
+```bash
+# Test SSH to both VPSs on new port 222
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS1-IP> "echo 'VPS-1 online'"
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS2-IP> "echo 'VPS-2 online'"
+```
+
+---
+
 ## Phase 7: Verification & Testing
 
 ### 7.1 Verify WireGuard Tunnel
@@ -1250,8 +1360,8 @@ sudo docker logs --tail 20 openclaw-openclaw-gateway-1
 # Test internal endpoint
 curl -s http://localhost:18789/ | grep -o "<title>.*</title>"
 
-# Test via Caddy (HTTPS only - port 80 blocked)
-curl -sk https://localhost:443/ | grep -o "<title>.*</title>"
+# Test via Caddy (HTTPS only, under /_openclaw/)
+curl -sk https://localhost:443/_openclaw/ | grep -o "<title>.*</title>"
 
 # Verify port 80 is blocked (should fail/timeout)
 curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expected)"
@@ -1269,8 +1379,8 @@ curl -s http://localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | .s
 # Test Loki
 curl -s http://localhost:3100/ready
 
-# Test Grafana via Caddy (HTTPS only)
-curl -sk https://localhost:443/ | head -5
+# Test Grafana via Caddy (HTTPS only, under /_observe/grafana/)
+curl -sk https://localhost:443/_observe/grafana/ | head -5
 
 # Verify port 80 is blocked (should fail/timeout)
 curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expected)"
@@ -1280,8 +1390,8 @@ curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expec
 
 1. Configure Cloudflare DNS to point your domain to the VPS IPs (use Cloudflare proxy for SSL termination)
 2. In Cloudflare SSL/TLS settings, set encryption mode to "Full (strict)"
-3. Access OpenClaw dashboard via `https://<your-domain>`
-4. Access Grafana via `https://<grafana-subdomain>` (login: admin / generated password)
+3. Access OpenClaw dashboard via `https://<your-domain>/_openclaw/`
+4. Access Grafana via `https://<grafana-subdomain>/_observe/grafana/` (login: admin / generated password)
 5. Verify Prometheus targets in Grafana → Explore → Prometheus
 6. Check logs flowing from VPS-1 in Grafana → Explore → Loki
 
@@ -1292,11 +1402,11 @@ curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expec
 ### SSH Access
 
 ```bash
-# OpenClaw VPS
-ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS1-IP>
+# OpenClaw VPS (port 222)
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS1-IP>
 
-# Observability VPS
-ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS2-IP>
+# Observability VPS (port 222)
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS2-IP>
 ```
 
 ### Service Management
@@ -1338,8 +1448,10 @@ sudo ufw reload           # Reload
 
 ### Both VPSs
 
-- [ ] SSH hardened (key-only, no root)
-- [ ] UFW firewall enabled (port 80 blocked, only 443 open)
+- [ ] SSH hardened (port 222, key-only, no root, UsePAM yes)
+- [ ] SSH socket override configured (`/etc/systemd/system/ssh.socket.d/override.conf`)
+- [ ] Openclaw user has passwordless sudo (`/etc/sudoers.d/openclaw`)
+- [ ] UFW firewall enabled (port 22 blocked, port 222 for SSH, only 443 for HTTPS)
 - [ ] Fail2ban running
 - [ ] Automatic security updates enabled
 - [ ] Kernel hardening applied
@@ -1439,21 +1551,31 @@ sudo systemctl restart sshd   # Wrong - will fail
 
 ## Key Deployment Notes
 
-1. **SSH service**: Ubuntu uses `ssh` not `sshd` as the service name
-2. **Docker networks**: Use 172.30.x.x subnets to avoid conflicts with Docker's default 172.20.0.0/16
-3. **File ownership**: Container runs as uid 1000 (node), so `.openclaw` directory must be owned by uid 1000
-4. **OpenClaw config**: Keep `openclaw.json` minimal - it rejects unknown keys
-5. **Gateway startup**: Use `--allow-unconfigured` flag to start without full setup
-6. **UFW on VPS-1**: Must allow ports 9100 and 18789 from WireGuard network (10.0.0.0/24)
-7. **Prometheus networking**: Use host network mode to access WireGuard IPs
-8. **Loki schema**: Use v13 with tsdb store (required by newer Loki versions)
-9. **SSL-only configuration**:
+1. **SSH port change - CRITICAL ORDER**:
+   - Configure UFW to allow port 222 BEFORE changing SSH config
+   - Keep port 22 open until port 222 is verified working
+   - Ubuntu uses socket activation - must update BOTH `/etc/systemd/system/ssh.socket.d/override.conf` AND `/etc/ssh/sshd_config.d/hardening.conf`
+   - After reboot/restart, verify `ss -tlnp | grep 222` shows SSH listening
+2. **SSH authentication**: Keep `UsePAM yes` on Ubuntu - setting it to `no` breaks user authentication
+3. **SSH service**: Ubuntu uses `ssh` not `sshd` as the service name
+4. **Openclaw user**: Has passwordless sudo via `/etc/sudoers.d/openclaw` - required for automation
+5. **Docker networks**: Use 172.30.x.x subnets to avoid conflicts with Docker's default 172.20.0.0/16
+6. **File ownership**: Container runs as uid 1000 (node), so `.openclaw` directory must be owned by uid 1000
+7. **OpenClaw config**: Keep `openclaw.json` minimal - it rejects unknown keys
+8. **Gateway startup**: Use `--allow-unconfigured` flag to start without full setup
+9. **UFW on VPS-1**: Must allow ports 9100 and 18789 from WireGuard network (10.0.0.0/24)
+10. **Prometheus networking**: Use host network mode to access WireGuard IPs
+11. **Loki schema**: Use v13 with tsdb store (required by newer Loki versions)
+12. **SSL-only configuration**:
    - Port 80 is blocked at firewall level (UFW)
    - Use Cloudflare Origin CA certificates for TLS
    - Set Cloudflare SSL mode to "Full (strict)"
    - Origin CA certs don't support OCSP stapling (warning in Caddy logs is expected)
    - Same wildcard cert can be used on both VPSs
-10. **Container security hardening**:
+13. **Obscured URL paths**: Services use non-standard paths to avoid bot scanners:
+    - OpenClaw: `/_openclaw/` (admin at `/_openclaw/_admin`)
+    - Grafana: `/_observe/grafana/`
+14. **Container security hardening**:
     - `build:` section required in override for `docker compose build` to work
     - `read_only: true` makes root filesystem read-only (security hardening)
     - `tmpfs` mounts provide writable `/tmp`, `/var/tmp`, `/run` directories

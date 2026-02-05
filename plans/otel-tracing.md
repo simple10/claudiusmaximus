@@ -1,8 +1,22 @@
+---
+feature: otel-tracing
+type: optional
+target-vps: Both
+playbook: playbooks/99-new-feature-implementation.md
+---
+
 # Plan: Add OpenTelemetry Tracing to OpenClaw VPS Deployment
 
 ## Summary
 
 Add Grafana Tempo for distributed tracing to complete the observability stack (metrics + logs + **traces**). OpenClaw's built-in `diagnostics-otel` plugin exports traces directly to Tempo via OTLP/HTTP over WireGuard.
+
+## Prerequisites
+
+- `04-vps1-openclaw.md` completed (OpenClaw running)
+- `05-vps2-observability.md` completed (Grafana, Loki running)
+- `02-wireguard.md` completed (WireGuard tunnel active between VPSs)
+- SSH access as `adminclaw` on port 222 to both VPSs
 
 ## Architecture Decision
 

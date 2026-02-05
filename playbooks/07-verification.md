@@ -1,10 +1,11 @@
 # 07 - Verification & Testing
 
-Comprehensive verification procedures after deployment.
+Comprehensive verification procedures after deployment for playbooks 01 through 06.
 
 ## Overview
 
 This playbook verifies:
+
 - WireGuard tunnel connectivity
 - OpenClaw gateway functionality
 - Monitoring stack health
@@ -21,11 +22,13 @@ This playbook verifies:
 Before running verification tests, reboot both VPSs to ensure all configuration changes take effect cleanly (especially kernel parameters, SSH config, and systemd services).
 
 **On VPS-1:**
+
 ```bash
 sudo reboot
 ```
 
 **On VPS-2:**
+
 ```bash
 sudo reboot
 ```
@@ -249,6 +252,7 @@ curl -s http://10.0.0.2:3100/ready
 3. **Verify Prometheus targets** in Grafana → Explore → Prometheus
 4. **Check logs flowing** in Grafana → Explore → Loki → `{host="openclaw"}`
 5. **Trigger a test alert** (optional):
+
    ```bash
    # Stop Node Exporter on VPS-1 temporarily
    sudo docker stop node-exporter

@@ -18,3 +18,14 @@ Deployment playbooks for Claude to execute. See `CLAUDE.md` for orchestration.
 
 - `networking/cloudflare-tunnel.md` - No certificates needed
 - `networking/caddy.md` - Requires Origin CA cert (see `docs/CLOUDFLARE-SSL.md`)
+
+## Meta Playbooks
+
+These playbooks guide Claude in extending the deployment:
+
+- `99-new-feature-planning.md` - Process for planning new features
+- `99-new-feature-implementation.md` - Process for implementing planned features
+
+## Optional Features
+
+The `extras/` directory contains optional playbooks that enhance the deployment but are not required for core functionality. See `extras/README.md` for details.

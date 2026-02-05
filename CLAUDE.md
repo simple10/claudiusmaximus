@@ -24,6 +24,10 @@ All deployment steps are in modular playbooks under `playbooks/`:
 | `networking/caddy.md` | Caddy reverse proxy with Origin CA | ✓ | ✓ |
 | `06-backup.md` | Backup scripts and cron jobs | ✓ | - |
 | `07-verification.md` | Testing and verification | ✓ | ✓ |
+| `99-new-feature-planning.md` | Process for planning new features | - | - |
+| `99-new-feature-implementation.md` | Process for implementing planned features | - | - |
+
+Optional features are in `playbooks/extras/`. See `extras/README.md` for details.
 
 See [playbooks/README.md](playbooks/README.md) for detailed playbook documentation.
 

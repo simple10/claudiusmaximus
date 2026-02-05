@@ -32,6 +32,8 @@ Read configuration from `~/openclaw-config.env`:
 
 Run these steps on **both VPS-1 and VPS-2**.
 
+> **Execution Order:** Complete sections 1.1-1.8 on VPS-1 first, then repeat on VPS-2. For UFW (1.3), use the rules specific to each VPS. Connect initially as `ubuntu` (OVH default), then use `adminclaw` after section 1.5.
+
 ### 1.1 System Update & Essential Packages
 
 ```bash
@@ -50,33 +52,65 @@ sudo apt install -y \
     wireguard wireguard-tools
 ```
 
-### 1.2 Create Dedicated User
+### 1.2 Create Dedicated Users
 
-**IMPORTANT**: You will be prompted to set a password for the openclaw user. Remember this password - you may need it for sudo or console access.
+This deployment uses a two-user security model:
+
+| User | SSH Access | Sudo | Purpose |
+|------|------------|------|---------|
+| `adminclaw` | ✅ Key only | ✅ Passwordless | System administration, Claude automation |
+| `openclaw` | ❌ No | ❌ None | Runs application, owns app files |
+
+**Security Benefits:**
+- If `openclaw` is compromised (e.g., RCE vulnerability), attacker CANNOT escalate to root
+- `adminclaw` is not a well-known username (unlike `ubuntu`)
+- Clear separation: admin tasks vs application runtime
+
+**IMPORTANT**: You will be prompted to set passwords. Remember these - you may need them for console access.
 
 ```bash
 #!/bin/bash
-OPENCLAW_USER="openclaw"
-
-# Create user
-sudo useradd -m -s /bin/bash "$OPENCLAW_USER"
+# ============================================
+# 1. Create adminclaw (admin user with sudo)
+# ============================================
+sudo useradd -m -s /bin/bash adminclaw
 
 # Set password interactively - REMEMBER THIS PASSWORD
-sudo passwd "$OPENCLAW_USER"
-
-# Add to sudo group
-sudo usermod -aG sudo "$OPENCLAW_USER"
+sudo passwd adminclaw
 
 # Grant passwordless sudo for automation (required for Claude Code to manage the server)
-echo "${OPENCLAW_USER} ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/${OPENCLAW_USER}
-sudo chmod 440 /etc/sudoers.d/${OPENCLAW_USER}
+echo "adminclaw ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/adminclaw
+sudo chmod 440 /etc/sudoers.d/adminclaw
 
-# Copy SSH authorized_keys from current user
-sudo mkdir -p /home/${OPENCLAW_USER}/.ssh
-sudo cp ~/.ssh/authorized_keys /home/${OPENCLAW_USER}/.ssh/
-sudo chown -R ${OPENCLAW_USER}:${OPENCLAW_USER} /home/${OPENCLAW_USER}/.ssh
-sudo chmod 700 /home/${OPENCLAW_USER}/.ssh
-sudo chmod 600 /home/${OPENCLAW_USER}/.ssh/authorized_keys
+# Copy SSH authorized_keys from current user (ubuntu)
+sudo mkdir -p /home/adminclaw/.ssh
+sudo cp ~/.ssh/authorized_keys /home/adminclaw/.ssh/
+sudo chown -R adminclaw:adminclaw /home/adminclaw/.ssh
+sudo chmod 700 /home/adminclaw/.ssh
+sudo chmod 600 /home/adminclaw/.ssh/authorized_keys
+
+# ============================================
+# 2. Create openclaw (app user, NO sudo, NO SSH)
+# ============================================
+sudo useradd -m -s /bin/bash openclaw
+
+# Set password interactively - REMEMBER THIS PASSWORD (for console access only)
+sudo passwd openclaw
+
+# NOTE: No sudo configuration for openclaw - this is intentional for security
+# NOTE: No SSH keys for openclaw - access via: sudo su - openclaw
+```
+
+**Workflow after setup:**
+```bash
+# SSH as admin user
+ssh -p 222 adminclaw@<VPS_IP>
+
+# Run commands as openclaw (no direct SSH)
+sudo -u openclaw docker compose up -d
+
+# Interactive shell as openclaw
+sudo su - openclaw
 ```
 
 ### 1.3 UFW Firewall Setup (Run BEFORE SSH Hardening)
@@ -157,8 +191,8 @@ KbdInteractiveAuthentication no
 # IMPORTANT: Keep UsePAM yes on Ubuntu - required for proper authentication
 UsePAM yes
 
-# Only allow specific users
-AllowUsers openclaw ubuntu
+# Only allow admin user (openclaw has no SSH access for security)
+AllowUsers adminclaw
 
 # Connection settings
 MaxAuthTries 3
@@ -203,12 +237,14 @@ ss -tlnp | grep 222
 
 **IMPORTANT**: Test SSH on port 222 BEFORE removing port 22 from the firewall.
 
+**NOTE**: Repeat this verification for EACH VPS before proceeding to later phases.
+
 ```bash
-# From your LOCAL machine, test SSH on port 222
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS_IP> "echo 'Port 222 works!'"
+# From your LOCAL machine, test SSH on port 222 (using adminclaw, not openclaw)
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS_IP> "echo 'Port 222 works!'"
 
 # If successful, SSH back in on port 222 and remove port 22 from UFW
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS_IP>
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS_IP>
 sudo ufw delete allow 22/tcp
 sudo ufw status
 ```
@@ -407,8 +443,11 @@ echo \
 sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# Add openclaw user to docker group
+# Add both users to docker group
+# - openclaw: runs containers
+# - adminclaw: manages containers via sudo -u openclaw
 sudo usermod -aG docker openclaw
+sudo usermod -aG docker adminclaw
 
 # Start and enable Docker
 sudo systemctl enable docker
@@ -1329,9 +1368,9 @@ sudo reboot
 Wait 1-2 minutes for both VPSs to come back online, then verify SSH access using the new port:
 
 ```bash
-# Test SSH to both VPSs on new port 222
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS1-IP> "echo 'VPS-1 online'"
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS2-IP> "echo 'VPS-2 online'"
+# Test SSH to both VPSs on new port 222 (using adminclaw)
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS1-IP> "echo 'VPS-1 online'"
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS2-IP> "echo 'VPS-2 online'"
 ```
 
 ---
@@ -1402,11 +1441,15 @@ curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expec
 ### SSH Access
 
 ```bash
-# OpenClaw VPS (port 222)
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS1-IP>
+# SSH as admin user (both VPSs use adminclaw)
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS1-IP>  # OpenClaw VPS
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS2-IP>  # Observability VPS
 
-# Observability VPS (port 222)
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS2-IP>
+# Switch to openclaw for app work (after SSH'ing in as adminclaw)
+sudo su - openclaw
+
+# Run single commands as openclaw
+sudo -u openclaw <command>
 ```
 
 ### Service Management
@@ -1448,9 +1491,11 @@ sudo ufw reload           # Reload
 
 ### Both VPSs
 
-- [ ] SSH hardened (port 222, key-only, no root, UsePAM yes)
+- [ ] Two-user model: `adminclaw` (admin with sudo) and `openclaw` (app user, no sudo)
+- [ ] SSH hardened (port 222, key-only, no root, UsePAM yes, AllowUsers adminclaw only)
 - [ ] SSH socket override configured (`/etc/systemd/system/ssh.socket.d/override.conf`)
-- [ ] Openclaw user has passwordless sudo (`/etc/sudoers.d/openclaw`)
+- [ ] Adminclaw user has passwordless sudo (`/etc/sudoers.d/adminclaw`)
+- [ ] Openclaw user has NO sudo access (security isolation)
 - [ ] UFW firewall enabled (port 22 blocked, port 222 for SSH, only 443 for HTTPS)
 - [ ] Fail2ban running
 - [ ] Automatic security updates enabled
@@ -1551,31 +1596,36 @@ sudo systemctl restart sshd   # Wrong - will fail
 
 ## Key Deployment Notes
 
-1. **SSH port change - CRITICAL ORDER**:
+1. **Two-user security model**:
+   - `adminclaw`: Admin user with SSH access and passwordless sudo - used for all system management
+   - `openclaw`: Application user with NO sudo and NO SSH - runs containers and owns app files
+   - If `openclaw` is compromised, attacker cannot escalate to root
+   - Access openclaw via: `sudo su - openclaw` or `sudo -u openclaw <command>`
+2. **SSH port change - CRITICAL ORDER**:
    - Configure UFW to allow port 222 BEFORE changing SSH config
    - Keep port 22 open until port 222 is verified working
    - Ubuntu uses socket activation - must update BOTH `/etc/systemd/system/ssh.socket.d/override.conf` AND `/etc/ssh/sshd_config.d/hardening.conf`
    - After reboot/restart, verify `ss -tlnp | grep 222` shows SSH listening
-2. **SSH authentication**: Keep `UsePAM yes` on Ubuntu - setting it to `no` breaks user authentication
-3. **SSH service**: Ubuntu uses `ssh` not `sshd` as the service name
-4. **Openclaw user**: Has passwordless sudo via `/etc/sudoers.d/openclaw` - required for automation
-5. **Docker networks**: Use 172.30.x.x subnets to avoid conflicts with Docker's default 172.20.0.0/16
-6. **File ownership**: Container runs as uid 1000 (node), so `.openclaw` directory must be owned by uid 1000
-7. **OpenClaw config**: Keep `openclaw.json` minimal - it rejects unknown keys
-8. **Gateway startup**: Use `--allow-unconfigured` flag to start without full setup
-9. **UFW on VPS-1**: Must allow ports 9100 and 18789 from WireGuard network (10.0.0.0/24)
-10. **Prometheus networking**: Use host network mode to access WireGuard IPs
-11. **Loki schema**: Use v13 with tsdb store (required by newer Loki versions)
-12. **SSL-only configuration**:
+3. **SSH authentication**: Keep `UsePAM yes` on Ubuntu - setting it to `no` breaks user authentication
+4. **SSH service**: Ubuntu uses `ssh` not `sshd` as the service name
+5. **Adminclaw user**: Has passwordless sudo via `/etc/sudoers.d/adminclaw` - required for automation
+6. **Docker networks**: Use 172.30.x.x subnets to avoid conflicts with Docker's default 172.20.0.0/16
+7. **File ownership**: Container runs as uid 1000 (node), so `.openclaw` directory must be owned by uid 1000
+8. **OpenClaw config**: Keep `openclaw.json` minimal - it rejects unknown keys
+9. **Gateway startup**: Use `--allow-unconfigured` flag to start without full setup
+10. **UFW on VPS-1**: Must allow ports 9100 and 18789 from WireGuard network (10.0.0.0/24)
+11. **Prometheus networking**: Use host network mode to access WireGuard IPs
+12. **Loki schema**: Use v13 with tsdb store (required by newer Loki versions)
+13. **SSL-only configuration**:
    - Port 80 is blocked at firewall level (UFW)
    - Use Cloudflare Origin CA certificates for TLS
    - Set Cloudflare SSL mode to "Full (strict)"
    - Origin CA certs don't support OCSP stapling (warning in Caddy logs is expected)
    - Same wildcard cert can be used on both VPSs
-13. **Obscured URL paths**: Services use non-standard paths to avoid bot scanners:
+14. **Obscured URL paths**: Services use non-standard paths to avoid bot scanners:
     - OpenClaw: `/_openclaw/` (admin at `/_openclaw/_admin`)
     - Grafana: `/_observe/grafana/`
-14. **Container security hardening**:
+15. **Container security hardening**:
     - `build:` section required in override for `docker compose build` to work
     - `read_only: true` makes root filesystem read-only (security hardening)
     - `tmpfs` mounts provide writable `/tmp`, `/var/tmp`, `/run` directories

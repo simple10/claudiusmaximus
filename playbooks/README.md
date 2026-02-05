@@ -2,6 +2,10 @@
 
 Deployment playbooks for Claude to execute. See `CLAUDE.md` for orchestration.
 
+## Analysis Mode
+
+For existing deployments, run `00-analysis-mode.md` first to verify current state before making changes.
+
 ## Execution Order
 
 1. `01-base-setup.md` - Both VPSs

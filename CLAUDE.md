@@ -15,6 +15,7 @@ All deployment steps are in modular playbooks under `playbooks/`:
 
 | Playbook | Description | VPS-1 | VPS-2 |
 |----------|-------------|:-----:|:-----:|
+| `00-analysis-mode.md` | Analyze existing deployments | ✓ | ✓ |
 | `01-base-setup.md` | Users, SSH, UFW, fail2ban, kernel | ✓ | ✓ |
 | `02-wireguard.md` | WireGuard tunnel between VPSs | ✓ | ✓ |
 | `03-docker.md` | Docker installation and hardening | ✓ | ✓ |
@@ -66,16 +67,43 @@ SLACK_BOT_TOKEN=
 
 ## Setup Question Flow
 
-When user requests deployment, validate configuration first:
+When user requests deployment or mentions VPS work, determine the deployment state first.
 
-### 1. Read Configuration
+### 0. Check for Existing State
+
+First, check if state files exist:
+
+```bash
+ls .state/*.md 2>/dev/null
+```
+
+If state files exist, inform the user:
+
+> "I found existing state files for this deployment. Would you like me to:"
+>
+> - **Use existing state** - Trust the recorded state and proceed
+> - **Re-analyze** - Run analysis mode to verify current state
+> - **Start fresh** - Ignore state files (for redeployment)
+
+### 1. New vs Existing Deployment
+
+If no state files exist, ask:
+
+> "Is this a **new deployment** or an **existing deployment**?"
+>
+> - **New deployment** - Fresh VPSs, run full playbook sequence
+> - **Existing deployment** - VPSs already configured, run analysis mode first
+
+If existing deployment, execute `00-analysis-mode.md` before proceeding.
+
+### 2. Read Configuration
 
 ```bash
 # Source the config file
 source ~/openclaw-config.env
 ```
 
-### 2. Validate Required Settings
+### 3. Validate Required Settings
 
 Check for required values:
 
@@ -85,7 +113,7 @@ Check for required values:
 - `DOMAIN_OPENCLAW`, `DOMAIN_GRAFANA` - Required for networking
 - `ANTHROPIC_API_KEY` - Required
 
-### 3. Prompt for Missing Settings
+### 4. Prompt for Missing Settings
 
 If `NETWORKING_OPTION` is not set:
 
@@ -94,7 +122,7 @@ If `NETWORKING_OPTION` is not set:
 > - **cloudflare-tunnel** (Recommended) - Zero exposed ports, origin IP hidden
 > - **caddy** - Port 443 exposed, uses Cloudflare Origin CA
 
-### 4. Confirm Before Proceeding
+### 5. Confirm Before Proceeding
 
 > "Ready to deploy with:
 >

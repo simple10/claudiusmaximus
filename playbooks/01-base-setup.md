@@ -1,0 +1,420 @@
+# 01 - Base Setup
+
+Base system configuration for both VPS-1 and VPS-2.
+
+## Overview
+
+This playbook configures:
+- System updates and essential packages
+- Two-user security model (adminclaw + openclaw)
+- UFW firewall
+- SSH hardening (port 222, key-only)
+- Fail2ban intrusion prevention
+- Automatic security updates
+- Kernel hardening
+
+## Prerequisites
+
+- Fresh Ubuntu VPS with SSH access as `ubuntu` user
+- SSH key configured and accessible
+- VPS IPs known and reachable
+
+## Variables
+
+From `../openclaw-config.env`:
+- `VPS1_IP`, `VPS2_IP` - Public IPs of both VPSs
+- `SSH_KEY_PATH` - Path to SSH private key
+- `SSH_USER` - Initial SSH user (ubuntu)
+
+## Execution Order
+
+Complete sections 1.1-1.8 on VPS-1 first, then repeat on VPS-2.
+
+For UFW (1.3), use the rules specific to each VPS.
+
+Connect initially as `ubuntu` (OVH default), then use `adminclaw` after section 1.5.
+
+---
+
+## 1.1 System Update & Essential Packages
+
+Run on: **Both VPSs**
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install essential packages
+sudo apt install -y \
+    curl wget git vim htop tmux unzip \
+    ca-certificates gnupg lsb-release \
+    apt-transport-https software-properties-common \
+    ufw fail2ban auditd \
+    wireguard wireguard-tools
+```
+
+---
+
+## 1.2 Create Dedicated Users
+
+Run on: **Both VPSs**
+
+This deployment uses a two-user security model:
+
+| User | SSH Access | Sudo | Purpose |
+|------|------------|------|---------|
+| `adminclaw` | Key only | Passwordless | System administration, Claude automation |
+| `openclaw` | None | None | Runs application, owns app files |
+
+**Security Benefits:**
+- If `openclaw` is compromised (e.g., RCE vulnerability), attacker CANNOT escalate to root
+- `adminclaw` is not a well-known username (unlike `ubuntu`)
+- Clear separation: admin tasks vs application runtime
+
+**IMPORTANT**: You will be prompted to set passwords. Remember these - you may need them for console access.
+
+```bash
+#!/bin/bash
+# ============================================
+# 1. Create adminclaw (admin user with sudo)
+# ============================================
+sudo useradd -m -s /bin/bash adminclaw
+
+# Set password interactively - REMEMBER THIS PASSWORD
+sudo passwd adminclaw
+
+# Grant passwordless sudo for automation (required for Claude Code to manage the server)
+echo "adminclaw ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/adminclaw
+sudo chmod 440 /etc/sudoers.d/adminclaw
+
+# Copy SSH authorized_keys from current user (ubuntu)
+sudo mkdir -p /home/adminclaw/.ssh
+sudo cp ~/.ssh/authorized_keys /home/adminclaw/.ssh/
+sudo chown -R adminclaw:adminclaw /home/adminclaw/.ssh
+sudo chmod 700 /home/adminclaw/.ssh
+sudo chmod 600 /home/adminclaw/.ssh/authorized_keys
+
+# ============================================
+# 2. Create openclaw (app user, NO sudo, NO SSH)
+# ============================================
+sudo useradd -m -s /bin/bash openclaw
+
+# Set password interactively - REMEMBER THIS PASSWORD (for console access only)
+sudo passwd openclaw
+
+# NOTE: No sudo configuration for openclaw - this is intentional for security
+# NOTE: No SSH keys for openclaw - access via: sudo su - openclaw
+```
+
+**Workflow after setup:**
+```bash
+# SSH as admin user
+ssh -p 222 adminclaw@<VPS_IP>
+
+# Run commands as openclaw (no direct SSH)
+sudo -u openclaw docker compose up -d
+
+# Interactive shell as openclaw
+sudo su - openclaw
+```
+
+---
+
+## 1.3 UFW Firewall Setup
+
+Run on: **Both VPSs** (with VPS-specific rules)
+
+**IMPORTANT**: Configure the firewall FIRST to allow port 222, then apply SSH hardening. This prevents lockout.
+
+### On VPS-1 (OpenClaw)
+
+```bash
+#!/bin/bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# SSH - allow BOTH ports during transition (remove port 22 after verifying 222 works)
+sudo ufw allow 22/tcp
+sudo ufw allow 222/tcp
+
+# WireGuard
+sudo ufw allow 51820/udp
+
+# IMPORTANT: Allow metrics ports from WireGuard network for Prometheus scraping
+sudo ufw allow from 10.0.0.0/24 to any port 9100
+sudo ufw allow from 10.0.0.0/24 to any port 18789
+
+# Enable
+sudo ufw --force enable
+```
+
+> **Note:** Port 443 is NOT opened here. The networking playbook (cloudflare-tunnel or caddy) will configure external access.
+
+### On VPS-2 (Observability)
+
+```bash
+#!/bin/bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# SSH - allow BOTH ports during transition (remove port 22 after verifying 222 works)
+sudo ufw allow 22/tcp
+sudo ufw allow 222/tcp
+
+# WireGuard
+sudo ufw allow 51820/udp
+
+# Enable
+sudo ufw --force enable
+```
+
+> **Note:** Port 443 is NOT opened here. The networking playbook will configure external access.
+
+---
+
+## 1.4 SSH Hardening
+
+Run on: **Both VPSs**
+
+**IMPORTANT**: Ubuntu uses systemd socket activation for SSH. To change the SSH port, you must update BOTH the socket AND the sshd config.
+
+```bash
+#!/bin/bash
+# Backup original config
+sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+
+# Create hardened sshd config
+sudo tee /etc/ssh/sshd_config.d/hardening.conf << 'EOF'
+# Use non-standard port to avoid bot scanners
+# NOTE: The systemd socket override (below) also sets this port
+Port 222
+
+# Disable root login
+PermitRootLogin no
+
+# Disable password authentication - SSH keys only
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
+
+# IMPORTANT: Keep UsePAM yes on Ubuntu - required for proper authentication
+UsePAM yes
+
+# Only allow admin user (openclaw has no SSH access for security)
+AllowUsers adminclaw
+
+# Connection settings
+MaxAuthTries 3
+MaxSessions 3
+LoginGraceTime 30
+
+# Disable unused features
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no
+PermitEmptyPasswords no
+PermitUserEnvironment no
+
+# Use strong algorithms only
+KexAlgorithms curve25519-sha256@libssh.org,diffie-hellman-group16-sha512
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+EOF
+
+# CRITICAL: Update systemd socket to listen on port 222
+# Ubuntu uses socket activation - the socket controls which port SSH listens on
+sudo mkdir -p /etc/systemd/system/ssh.socket.d
+sudo tee /etc/systemd/system/ssh.socket.d/override.conf << 'EOF'
+[Socket]
+# Clear the default ListenStream (port 22) and set port 222
+ListenStream=
+ListenStream=0.0.0.0:222
+ListenStream=[::]:222
+EOF
+
+# Reload systemd and restart SSH socket and service
+sudo systemctl daemon-reload
+sudo systemctl restart ssh.socket
+sudo systemctl restart ssh
+
+# Verify SSH is listening on port 222
+echo "Verifying SSH is listening on port 222..."
+ss -tlnp | grep 222
+```
+
+---
+
+## 1.5 Verify SSH Port Change and Remove Port 22
+
+**IMPORTANT**: Test SSH on port 222 BEFORE removing port 22 from the firewall.
+
+**NOTE**: Repeat this verification for EACH VPS before proceeding to later phases.
+
+```bash
+# From your LOCAL machine, test SSH on port 222 (using adminclaw, not openclaw)
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS_IP> "echo 'Port 222 works!'"
+
+# If successful, SSH back in on port 222 and remove port 22 from UFW
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS_IP>
+sudo ufw delete allow 22/tcp
+sudo ufw status
+```
+
+---
+
+## 1.6 Fail2ban Configuration
+
+Run on: **Both VPSs**
+
+```bash
+#!/bin/bash
+sudo tee /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+backend = systemd
+
+[sshd]
+enabled = true
+port = 222
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 24h
+EOF
+
+sudo systemctl enable fail2ban
+sudo systemctl restart fail2ban
+```
+
+---
+
+## 1.7 Automatic Security Updates
+
+Run on: **Both VPSs**
+
+```bash
+#!/bin/bash
+sudo apt install -y unattended-upgrades
+
+sudo tee /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}";
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+EOF
+
+sudo systemctl enable unattended-upgrades
+```
+
+---
+
+## 1.8 Kernel Hardening
+
+Run on: **Both VPSs**
+
+```bash
+#!/bin/bash
+sudo tee /etc/sysctl.d/99-security.conf << 'EOF'
+# IP Spoofing protection
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Ignore ICMP broadcast requests
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Disable source packet routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+
+# Ignore send redirects
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Block SYN attacks
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 2048
+net.ipv4.tcp_synack_retries = 2
+
+# Log Martians
+net.ipv4.conf.all.log_martians = 1
+
+# Ignore ICMP redirects
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+
+# Enable ASLR
+kernel.randomize_va_space = 2
+
+# Restrict dmesg access
+kernel.dmesg_restrict = 1
+
+# Restrict kernel pointer access
+kernel.kptr_restrict = 2
+EOF
+
+sudo sysctl -p /etc/sysctl.d/99-security.conf
+```
+
+---
+
+## Verification
+
+After completing all steps on both VPSs:
+
+```bash
+# Test SSH on port 222
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS1_IP> "echo 'VPS-1 OK'"
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS2_IP> "echo 'VPS-2 OK'"
+
+# Verify UFW is active
+sudo ufw status
+
+# Verify fail2ban is running
+sudo systemctl status fail2ban
+
+# Verify kernel parameters
+sudo sysctl net.ipv4.tcp_syncookies
+```
+
+---
+
+## Troubleshooting
+
+### SSH Connection Refused on Port 222
+
+```bash
+# Check if socket override exists
+ls -la /etc/systemd/system/ssh.socket.d/
+
+# Check what port SSH is listening on
+ss -tlnp | grep ssh
+
+# Restart SSH properly (Ubuntu uses 'ssh' not 'sshd')
+sudo systemctl restart ssh.socket
+sudo systemctl restart ssh
+```
+
+### Locked Out of SSH
+
+If you can't SSH in:
+1. Use OVH console/VNC access
+2. Login as adminclaw (or root if still available)
+3. Check `/etc/ssh/sshd_config.d/hardening.conf` for errors
+4. Temporarily: `sudo ufw allow 22/tcp` and restart ssh
+
+### UsePAM Error
+
+If authentication fails:
+- Ensure `UsePAM yes` is set (not `no`)
+- Ubuntu requires PAM for proper user authentication

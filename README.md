@@ -15,10 +15,13 @@ The two VPSs communicate over a secure WireGuard tunnel (`10.0.0.1` ↔ `10.0.0.
 
 ## Prerequisites
 
-- Two OVHCloud VPS-2 instances (Ubuntu 24.04 LTS)
+- Two VPS instances (Ubuntu 24.04 LTS)
 - SSH key pair for authentication
-- Anthropic API key
+- Anthropic API key for OpenClaw (placeholder can be used)
 - (Optional) Domain with Cloudflare DNS for SSL
+
+Anthropic API key is needed for OpenClaw to run. However it can be added after
+setup is complete.
 
 ---
 
@@ -94,6 +97,7 @@ In Cloudflare Dashboard → **DNS**:
 ### Step 3: Deploy with Claude Code
 
 1. Ensure your SSH key is loaded:
+
    ```bash
    ssh-add ~/.ssh/ovh_openclaw_ed25519
    ```
@@ -116,6 +120,7 @@ In Cloudflare Dashboard → **DNS**:
    - Without domain: `https://<VPS-1-IP>/_openclaw/_admin`
 
 2. **Important**: You need the gateway token to access the admin interface:
+
    ```bash
    # SSH to VPS-1 and get the token (note: SSH uses port 222)
    ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-1-IP>
@@ -131,6 +136,7 @@ In Cloudflare Dashboard → **DNS**:
    - Without domain: `https://<VPS-2-IP>/_observe/grafana/`
 
 2. Get the Grafana password:
+
    ```bash
    # SSH to VPS-2 and get the password (note: SSH uses port 222)
    ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-2-IP>
@@ -222,11 +228,13 @@ openclaw-vps/
 ### Logs Not Appearing in Grafana
 
 1. Check Promtail is running on VPS-1:
+
    ```bash
    docker compose logs promtail
    ```
 
 2. Check Loki is receiving data on VPS-2:
+
    ```bash
    curl http://localhost:3100/ready
    ```
@@ -266,6 +274,6 @@ sudo ufw status | grep 51820
 
 ## Support
 
-- OpenClaw Documentation: https://docs.openclaw.ai
-- OpenClaw GitHub: https://github.com/openclaw/openclaw
-- OVHCloud Support: https://help.ovhcloud.com
+- OpenClaw Documentation: <https://docs.openclaw.ai>
+- OpenClaw GitHub: <https://github.com/openclaw/openclaw>
+- OVHCloud Support: <https://help.ovhcloud.com>

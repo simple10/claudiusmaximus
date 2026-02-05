@@ -67,7 +67,7 @@ Update `openclaw-config.env` with your choice:
 
 ```bash
 NETWORKING_OPTION=cloudflare-tunnel  # or "caddy"
-DOMAIN_OPENCLAW=claw.example.com
+DOMAIN_OPENCLAW=openclaw.example.com
 DOMAIN_GRAFANA=observe.example.com
 ```
 

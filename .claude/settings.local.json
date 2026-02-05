@@ -16,7 +16,8 @@
       "Bash(find:*)",
       "WebSearch",
       "WebFetch(domain:docs.ansible.com)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(ls:*)"
     ]
   }
 }

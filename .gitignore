@@ -3,3 +3,5 @@ certs/
 *.env
 *.key
 .state/
+
+openclaw-config.env

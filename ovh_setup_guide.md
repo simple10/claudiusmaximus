@@ -24,7 +24,27 @@ You'll be setting up **two VPS-2 instances** on OVHCloud:
 
 ---
 
-## Step 2: Order Two VPS-2 Instances
+## Step 2: Generate a New SSH Key
+
+You will need the public key during the checkout flow for OVH.
+
+If you do not add the public key during checkout, it can be added after provisioning by
+reinstalling the OS in the OVH dashboard.
+
+```bash
+# On your local machine
+ssh-keygen -t ed25519 -C "ovh-openclaw-vps" -f ~/.ssh/ovh_openclaw_ed25519
+# Enter a secure password when prompted, used to decrypt the local private key
+# Securely store the password, you'll need it for ssh-add step later on
+
+# Update permissions for all local keys
+chmod -R 600 ~/.ssh/*
+
+# View public key to paste into OVHCloud
+cat ~/.ssh/ovh_openclaw_ed25519.pub
+```
+
+## Step 3: Order Two VPS-2 Instances
 
 ### For each VPS
 
@@ -37,31 +57,12 @@ You'll be setting up **two VPS-2 instances** on OVHCloud:
    | **Model** | VPS-2 (6 vCores, 12GB RAM, 100GB NVMe) |
    | **Location** | Choose a **standard datacenter** (not Local Zone) — e.g., Vint Hill VA, Hillsboro OR, or EU |
    | **Operating System** | **Ubuntu 24.04 LTS** |
-   | **SSH Key** | Add your public SSH key (see below) |
+   | **SSH Key** | Add your public SSH key |
    | **Hostname** | `openclaw` for VPS-1, `observe` for VPS-2 |
-
-4. Complete checkout for both VPSs
-
-### Generate SSH Key (if you don't have one)
-
-```bash
-# On your local machine
-ssh-keygen -t ed25519 -C "ovh-openclaw-vps" -f ~/.ssh/ovh_openclaw_ed25519
-# Enter a secure password when prompted, used to decrypt the local private key
-
-# Update permissions for all local keys
-chmod -R 600 ~/.ssh/*
-
-# View public key to paste into OVHCloud
-cat ~/.ssh/ovh_openclaw_ed25519.pub
-
-# Optionally add ssh key for local sessions - needed for claude to do it's work
-ssh-add ~/.ssh/ovh_openclaw_ed25519
-```
 
 ---
 
-## Step 3: Wait for Provisioning
+## Step 4: Wait for Provisioning
 
 OVHCloud typically provisions VPSs within 5-15 minutes. You'll receive:
 
@@ -76,21 +77,31 @@ OVHCloud typically provisions VPSs within 5-15 minutes. You'll receive:
 
 Record them in openclaw-config.env:
 
-```
+```bash
+# openclaw-config.env
+
 VPS1_IP=15.x.x.x
 VPS1_HOSTNAME=openclaw
 
 VPS2_IP=15.x.x.x
 VPS2_HOSTNAME=observe
+
+# SSH Configuration (required)
+SSH_KEY_PATH=~/.ssh/ovh_openclaw_ed25519 # Path to your ssh key generated in Step 2
+SSH_USER=ubuntu # This is the initial user created by OVH, it will get changed to admin claw during hardening
+SSH_PORT=22 # Initial SSH port, will get changed to 222 during hardening
 ```
 
 ---
 
-## Step 4: Verify SSH Access
+## Step 5: Verify SSH Access
 
 Test SSH access to both VPSs from your local machine:
 
 ```bash
+# Add ssh key for local sessions - needed for claude to do it's work
+ssh-add ~/.ssh/ovh_openclaw_ed25519
+
 # Test VPS-1 (OpenClaw)
 ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-1-IP>
 
@@ -110,7 +121,7 @@ If you can't connect:
 
 ---
 
-## Step 5: Verify System Requirements
+## Step 6: Verify System Requirements
 
 SSH into each VPS and run these checks:
 
@@ -141,7 +152,7 @@ Expected output:
 
 ---
 
-### Step 6: Continue with Steps in [README.md](./README.md)
+### Step 7: Continue with Steps in [README.md](./README.md)
 
 Finish the setup steps in README.md and hand off to claude to implement.
 
@@ -154,15 +165,18 @@ Finish the setup steps in README.md and hand off to claude to implement.
 **Note**: After deployment, SSH uses port 222 (not 22). During initial setup, use the default port 22.
 
 ```bash
+# Add ssh key for local sessions - needed for claude to do it's work
+ssh-add ~/.ssh/ovh_openclaw_ed25519
+
 # SSH to OpenClaw VPS (before deployment - default port 22)
 ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-1-IP>
 
 # SSH to Observability VPS (before deployment - default port 22)
 ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-2-IP>
 
-# After deployment - use port 222 and openclaw user
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-1-IP>
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-2-IP>
+# After claude deployment and hardening - use port 222 and adminclaw user
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS-1-IP>
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS-2-IP>
 ```
 
 ### OVHCloud Control Panel Links

@@ -44,16 +44,19 @@ See [playbooks/README.md](playbooks/README.md) for detailed playbook documentati
 
 ## Configuration
 
-Read configuration from `openclaw-config.env`:
+IMPORTANT: Read configuration from `openclaw-config.env`:
 
 ```bash
+# Example config - use the actual values from openclaw-config.env
+
 # Required
-VPS1_IP=X.X.X.X              # VPS-1 public IP
-VPS2_IP=Y.Y.Y.Y              # VPS-2 public IP
-SSH_KEY_PATH=~/.ssh/key      # SSH private key path
-SSH_USER=ubuntu              # Initial SSH user (OVH default)
-NETWORKING_OPTION=cloudflare-tunnel  # or "caddy"
-DOMAIN_OPENCLAW=claw.example.com
+VPS1_IP=X.X.X.X                             # VPS-1 public IP
+VPS2_IP=Y.Y.Y.Y                             # VPS-2 public IP
+SSH_KEY_PATH=~/.ssh/ovh_openclaw_ed25519    # SSH private key path
+SSH_USER=adminclaw                          # SSH user (initially ubuntu then changed to adminclaw during hardening)
+SSH_PORT=222                                # SSH port (initially 22 then changed to 222 during hardening)
+NETWORKING_OPTION=cloudflare-tunnel         # or "caddy"
+DOMAIN_OPENCLAW=openclaw.example.com
 DOMAIN_GRAFANA=observe.example.com
 ANTHROPIC_API_KEY=sk-ant-...
 
@@ -63,73 +66,174 @@ DISCORD_BOT_TOKEN=
 SLACK_BOT_TOKEN=
 ```
 
+SSH_USER and SSH_PORT are changed in the hardening steps during deployment.
+
 ---
 
 ## Setup Question Flow
 
-When user requests deployment or mentions VPS work, determine the deployment state first.
+**ALWAYS start this flow when the user's intent is ambiguous or general** (e.g., "hi", "start", "let's go", "help me", or any message that doesn't clearly ask for something else like editing a specific file). Also start this flow when the user explicitly requests deployment or mentions VPS work. The Setup Question Flow is the default entry point for this project.
 
-### 0. Check for Existing State
+### Step 0: Check Configuration File
 
-First, check if state files exist:
+Before presenting any options, check if `openclaw-config.env` exists:
+
+```bash
+ls openclaw-config.env 2>/dev/null
+```
+
+**If missing:** Stop and prompt the user:
+
+> "No `openclaw-config.env` found. Please create this file with your configuration:
+>
+> ```bash
+> cp openclaw-config.example.env openclaw-config.env
+> # Then fill in the required values
+> ```
+>
+> Once created, let me know and we'll continue."
+
+**If exists:** Validate required fields:
+
+Required fields to check in openclaw-config.env:
+
+- `VPS1_IP`, `VPS2_IP` - Must be valid IPs
+- `SSH_KEY_PATH` - Must exist on local system
+- `SSH_USER` - Must be set (typically `ubuntu` for fresh OVH VPS)
+- `DOMAIN_OPENCLAW`, `DOMAIN_GRAFANA` - Must be set
+- `ANTHROPIC_API_KEY` - Must be set, can be a placeholder
+
+If any required field is missing, report all missing fields and ask user to update the file.
+
+If all required fields are present, test SSH access to both VPSs:
+
+```bash
+ssh -i <SSH_KEY_PATH> -o ConnectTimeout=10 -o BatchMode=yes -p <SSH_PORT> <SSH_USER>@<VPS1_IP> echo "VPS1 OK"
+ssh -i <SSH_KEY_PATH> -o ConnectTimeout=10 -o BatchMode=yes -p <SSH_PORT> <SSH_USER>@<VPS2_IP> echo "VPS2 OK"
+```
+
+**If SSH fails:** Stop and help troubleshoot:
+
+> "Cannot connect to VPS. Please add your ssh and make sure you can SSH into each VPS:
+>
+> "Add your ssh key:"
+> ssh-add <SSH_KEY_PATH>
+>
+> "Test SSH:"
+> ssh -p <SSH_PORT> <SSH_USER>@<VPS1_IP> echo "VPS1 OK"
+> ssh -p <SSH_PORT> <SSH_USER>@<VPS2_IP> echo "VPS2 OK"
+>
+> "Once SSH works, return here and say 'continue'
+
+**If SSH succeeds:** Proceed to Step 1.
+
+### Step 1: Deployment Type Selection
+
+Present the main options:
+
+> "What would you like to do?"
+>
+> 1. **New deployment** - Fresh VPSs, run full setup
+> 2. **Existing deployment** - VPSs already have some configuration
+
+---
+
+### Path A: New Deployment
+
+#### A1. Networking Option
+
+If `NETWORKING_OPTION` is not set in config:
+
+> "Which networking solution do you want to use?"
+>
+> - **cloudflare-tunnel** (Recommended) - Zero exposed ports, origin IP hidden
+> - **caddy** - Port 443 exposed, uses Cloudflare Origin CA
+
+Save the selection to `openclaw-config.env`.
+
+#### A2. Playbook Selection
+
+Present playbook selection:
+
+> "Select playbooks to run:"
+>
+> **Core deployment** (selected by default):
+>
+> - [x] Base deployment (01-07 + networking)
+>   - Includes: base-setup, wireguard, docker, openclaw, observability, networking, backup, verification
+>
+> **Optional features** (from `playbooks/extras/`):
+>
+> - [ ] *(None currently available)*
+
+#### A3. Confirmation
+
+Show summary and confirm:
+
+> "Ready to deploy:
+>
+> - VPS-1: `<VPS1_IP>` (OpenClaw)
+> - VPS-2: `<VPS2_IP>` (Observability)
+> - Networking: `<NETWORKING_OPTION>`
+> - Domains: `<DOMAIN_OPENCLAW>`, `<DOMAIN_GRAFANA>`
+> - Playbooks: Base deployment
+>
+> Proceed?"
+
+---
+
+### Path B: Existing Deployment
+
+#### B1. Check for State Files
 
 ```bash
 ls .state/*.md 2>/dev/null
 ```
 
-If state files exist, inform the user:
+**If no state files exist:**
 
-> "I found existing state files for this deployment. Would you like me to:"
+> "No state files found. I recommend analyzing your current setup first to understand what's already configured.
 >
-> - **Use existing state** - Trust the recorded state and proceed
-> - **Re-analyze** - Run analysis mode to verify current state
-> - **Start fresh** - Ignore state files (for redeployment)
-
-### 1. New vs Existing Deployment
-
-If no state files exist, ask:
-
-> "Is this a **new deployment** or an **existing deployment**?"
+> Run analysis mode now?"
 >
-> - **New deployment** - Fresh VPSs, run full playbook sequence
-> - **Existing deployment** - VPSs already configured, run analysis mode first
+> - **Yes** - Execute `00-analysis-mode.md`
+> - **No** - Skip analysis and proceed to options
 
-If existing deployment, execute `00-analysis-mode.md` before proceeding.
+#### B2. Existing Deployment Options
 
-### 2. Read Configuration
+Present options for existing deployments:
 
-```bash
-# Source the config file
-source ~/openclaw-config.env
-```
-
-### 3. Validate Required Settings
-
-Check for required values:
-
-- `VPS1_IP`, `VPS2_IP` - Required
-- `SSH_KEY_PATH`, `SSH_USER` - Required
-- `NETWORKING_OPTION` - Prompt if missing
-- `DOMAIN_OPENCLAW`, `DOMAIN_GRAFANA` - Required for networking
-- `ANTHROPIC_API_KEY` - Required
-
-### 4. Prompt for Missing Settings
-
-If `NETWORKING_OPTION` is not set:
-
-> "NETWORKING_OPTION is not set. Which networking solution?"
+> "What would you like to do?"
 >
-> - **cloudflare-tunnel** (Recommended) - Zero exposed ports, origin IP hidden
-> - **caddy** - Port 443 exposed, uses Cloudflare Origin CA
+> 1. **Re-analyze** - Verify current state matches state files
+> 2. **Test** - Run verification checks (`07-verification.md`)
+> 3. **Modify** - Add features or make changes
 
-### 5. Confirm Before Proceeding
+#### B3. Modify Sub-flow
 
-> "Ready to deploy with:
+When user selects "Modify":
+
+> "What modifications do you want to make?"
 >
-> - VPS-1: X.X.X.X (OpenClaw)
-> - VPS-2: Y.Y.Y.Y (Observability)
-> - Networking: Cloudflare Tunnel
-> - Domain: claw.example.com, observe.example.com
+> **Available extras** (from `playbooks/extras/`):
+>
+> - *(None currently available)*
+>
+> **Other options:**
+>
+> - **Something else** - Describe what you need
+
+If user selects "Something else," trigger `99-new-feature-planning.md` workflow.
+
+#### B4. Confirmation
+
+After action selection, show summary:
+
+> "Ready to execute:
+>
+> - VPS-1: `<VPS1_IP>`
+> - VPS-2: `<VPS2_IP>`
+> - Action: [selected action]
 >
 > Proceed?"
 
@@ -216,8 +320,8 @@ Execute: `playbooks/networking/caddy.md`
 
 ```bash
 # After base setup, SSH as adminclaw (not ubuntu)
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS1-IP>
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS2-IP>
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p <SSH_PORT:222> <SSH_USER:adminclaw>@<VPS1-IP>
+ssh -i ~/.ssh/ovh_openclaw_ed25519 -p <SSH_PORT:222> <SSH_USER:adminclaw>@<VPS2-IP>
 
 # Run commands as openclaw
 sudo -u openclaw <command>

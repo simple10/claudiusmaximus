@@ -41,7 +41,7 @@ From `../openclaw-config.env`:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────-────┐
 │                         Internet                             │
 │                                                              │
 │    User ──► openclaw.example.com ──► Cloudflare Edge         │

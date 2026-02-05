@@ -20,6 +20,14 @@ Read configuration from `~/openclaw-config.env`:
 
 ---
 
+## General Rules
+
+- **Preserve comments in config files.** Comments document intent and aid future maintenance. Never strip comments unless explicitly asked.
+- **Update stale comments.** If code changes make a comment inaccurate, fix the comment — don't delete it.
+- **Add comments for non-obvious settings.** Explain *why*, not *what*.
+
+---
+
 ## Phase 1: Base Setup (Both VPSs)
 
 Run these steps on **both VPS-1 and VPS-2**.
@@ -54,7 +62,7 @@ sudo useradd -m -s /bin/bash "$OPENCLAW_USER"
 # Generate random password (user won't need it, SSH key auth only)
 echo "${OPENCLAW_USER}:$(openssl rand -base64 32)" | sudo chpasswd
 
-# Add to sudo group
+# Add to sudo and docker groups
 sudo usermod -aG sudo "$OPENCLAW_USER"
 
 # Copy SSH authorized_keys
@@ -101,8 +109,8 @@ Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
 MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
 EOF
 
-# Restart SSH
-sudo systemctl restart sshd
+# IMPORTANT: Ubuntu uses 'ssh' not 'sshd' as service name
+sudo systemctl restart ssh
 ```
 
 ### 1.4 UFW Firewall Setup
@@ -117,12 +125,15 @@ sudo ufw default allow outgoing
 # SSH
 sudo ufw allow 22/tcp
 
-# HTTP/HTTPS (for Caddy)
-sudo ufw allow 80/tcp
+# HTTPS only (port 80 blocked for security - use Cloudflare Origin CA)
 sudo ufw allow 443/tcp
 
 # WireGuard
 sudo ufw allow 51820/udp
+
+# IMPORTANT: Allow metrics ports from WireGuard network for Prometheus scraping
+sudo ufw allow from 10.0.0.0/24 to any port 9100
+sudo ufw allow from 10.0.0.0/24 to any port 18789
 
 # Enable
 sudo ufw --force enable
@@ -138,8 +149,7 @@ sudo ufw default allow outgoing
 # SSH
 sudo ufw allow 22/tcp
 
-# HTTP/HTTPS (for Grafana via Caddy)
-sudo ufw allow 80/tcp
+# HTTPS only (port 80 blocked for security - use Cloudflare Origin CA)
 sudo ufw allow 443/tcp
 
 # WireGuard
@@ -404,24 +414,26 @@ sudo dpkg -i sysbox-ce_0.6.4-0.linux_amd64.deb
 sudo systemctl status sysbox
 
 # Verify runtime is available
-docker info | grep -i runtime
+sudo docker info | grep -i "sysbox"
 ```
 
 ### 4.2 Create Docker Networks
 
 ```bash
 #!/bin/bash
+# IMPORTANT: Use 172.30.x.x subnets to avoid conflicts with Docker's default bridge (172.20.0.0/16)
+
 # Gateway network (for OpenClaw)
 docker network create \
     --driver bridge \
-    --subnet 172.20.0.0/24 \
+    --subnet 172.30.0.0/24 \
     openclaw-gateway-net
 
 # Sandbox network (internal only, for sandboxes)
 docker network create \
     --driver bridge \
     --internal \
-    --subnet 172.21.0.0/24 \
+    --subnet 172.31.0.0/24 \
     openclaw-sandbox-net
 ```
 
@@ -429,11 +441,11 @@ docker network create \
 
 ```bash
 #!/bin/bash
+# Create directories as openclaw user
 sudo -u openclaw bash << 'EOF'
 OPENCLAW_HOME="/home/openclaw"
 
 mkdir -p "${OPENCLAW_HOME}/openclaw"
-mkdir -p "${OPENCLAW_HOME}/.openclaw"
 mkdir -p "${OPENCLAW_HOME}/.openclaw/workspace"
 mkdir -p "${OPENCLAW_HOME}/.openclaw/credentials"
 mkdir -p "${OPENCLAW_HOME}/.openclaw/logs"
@@ -443,6 +455,10 @@ mkdir -p "${OPENCLAW_HOME}/scripts"
 chmod 700 "${OPENCLAW_HOME}/.openclaw"
 chmod 700 "${OPENCLAW_HOME}/.openclaw/credentials"
 EOF
+
+# IMPORTANT: Container runs as uid 1000 (node user), which is typically 'ubuntu' on the host
+# Change ownership of .openclaw to uid 1000 for container write access
+sudo chown -R 1000:1000 /home/openclaw/.openclaw
 ```
 
 ### 4.4 Clone OpenClaw Repository
@@ -450,8 +466,8 @@ EOF
 ```bash
 #!/bin/bash
 sudo -u openclaw bash << 'EOF'
-cd /home/openclaw/openclaw
-git clone https://github.com/openclaw/openclaw.git .
+cd /home/openclaw
+git clone https://github.com/openclaw/openclaw.git openclaw
 EOF
 ```
 
@@ -461,6 +477,7 @@ EOF
 #!/bin/bash
 # Generate gateway token
 GATEWAY_TOKEN=$(openssl rand -hex 32)
+GRAFANA_PASSWORD=$(openssl rand -base64 16)
 
 sudo -u openclaw tee /home/openclaw/openclaw/.env << EOF
 # Gateway authentication
@@ -474,121 +491,119 @@ TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
 DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
 
 # Grafana password for monitoring
-GRAFANA_PASSWORD=$(openssl rand -base64 16)
+GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
+
+# Docker compose variables (required by repo's docker-compose.yml)
+OPENCLAW_CONFIG_DIR=/home/openclaw/.openclaw
+OPENCLAW_WORKSPACE_DIR=/home/openclaw/.openclaw/workspace
+OPENCLAW_GATEWAY_PORT=127.0.0.1:18789
+OPENCLAW_BRIDGE_PORT=127.0.0.1:18790
+OPENCLAW_GATEWAY_BIND=lan
 EOF
 
 sudo chmod 600 /home/openclaw/openclaw/.env
 sudo chown openclaw:openclaw /home/openclaw/openclaw/.env
 ```
 
-### 4.6 Create Docker Compose for OpenClaw
+### 4.6 Create Docker Compose Override
+
+The OpenClaw repo includes a docker-compose.yml. Create an override file to add build config, security hardening, and monitoring services:
 
 ```bash
 #!/bin/bash
-sudo -u openclaw tee /home/openclaw/openclaw/docker-compose.yml << 'EOF'
-version: '3.8'
-
+sudo -u openclaw tee /home/openclaw/openclaw/docker-compose.override.yml << 'EOF'
 services:
   openclaw-gateway:
+    # Build configuration - required for docker compose build
     build:
       context: .
       dockerfile: Dockerfile
     image: openclaw:local
     container_name: openclaw-gateway
     runtime: sysbox-runc
-    restart: unless-stopped
 
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 8G
-        reservations:
-          cpus: '1'
-          memory: 2G
-
-    security_opt:
-      - no-new-privileges:true
-
+    # Security hardening: read-only root filesystem with tmpfs for writable dirs
     read_only: true
     tmpfs:
       - /tmp:size=500M,mode=1777
       - /var/tmp:size=200M,mode=1777
       - /run:size=100M,mode=755
 
+    # Run as non-root user (node user in container is uid 1000)
     user: "1000:1000"
 
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          cpus: "1"
+          memory: 2G
+    security_opt:
+      - no-new-privileges:true
     environment:
       - NODE_ENV=production
-      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      - OPENCLAW_BIND=0.0.0.0
       - TZ=UTC
-
-    volumes:
-      - /home/openclaw/.openclaw:/home/node/.openclaw:rw
-      - /home/openclaw/.openclaw/workspace:/home/node/workspace:rw
-      - openclaw_node_modules:/app/node_modules:rw
-
     networks:
       - openclaw-gateway-net
-
-    ports:
-      - "127.0.0.1:18789:18789"
-
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:18789/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "5"
+    # IMPORTANT: Pass --allow-unconfigured to start without full setup
+    command:
+      [
+        "node",
+        "dist/index.js",
+        "gateway",
+        "--allow-unconfigured",
+        "--bind",
+        "lan",
+        "--port",
+        "18789",
+      ]
 
-  # CLI for management
   openclaw-cli:
+    # Build configuration for CLI
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: openclaw:local
-    container_name: openclaw-cli
     runtime: sysbox-runc
-    profiles:
-      - cli
-    user: "1000:1000"
-    volumes:
-      - /home/openclaw/.openclaw:/home/node/.openclaw:rw
-      - /home/openclaw/.openclaw/workspace:/home/node/workspace:rw
     networks:
       - openclaw-gateway-net
-    stdin_open: true
-    tty: true
-    entrypoint: ["node", "dist/index.js"]
 
-  # Node Exporter (metrics to VPS-2)
+  # Node Exporter - ships metrics to VPS-2 Prometheus
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
     restart: unless-stopped
     command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
     network_mode: host
 
-  # Promtail (ships logs to VPS-2)
   promtail:
     image: grafana/promtail:latest
     container_name: promtail
     restart: unless-stopped
     volumes:
-      - /home/openclaw/openclaw/promtail-config.yml:/etc/promtail/config.yml:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
       - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
     command: -config.file=/etc/promtail/config.yml
@@ -597,9 +612,6 @@ services:
 networks:
   openclaw-gateway-net:
     external: true
-
-volumes:
-  openclaw_node_modules:
 EOF
 ```
 
@@ -643,56 +655,65 @@ EOF
 
 ```bash
 #!/bin/bash
-sudo -u openclaw tee /home/openclaw/.openclaw/openclaw.json << 'EOF'
+# IMPORTANT: Keep this minimal - OpenClaw rejects unknown config keys
+sudo tee /home/openclaw/.openclaw/openclaw.json << 'EOF'
 {
-  "agents": {
-    "defaults": {
-      "sandbox": {
-        "mode": "non-main",
-        "scope": "agent",
-        "docker": {
-          "image": "openclaw-sandbox:bookworm-slim",
-          "readOnlyRoot": true,
-          "network": "none",
-          "user": "1000:1000",
-          "capDrop": ["ALL"],
-          "memory": "1g",
-          "cpus": 1,
-          "pidsLimit": 100
-        }
-      },
-      "tools": {
-        "allowlist": ["exec", "read", "write", "edit", "glob", "grep"],
-        "denylist": ["elevated"]
-      }
-    }
-  },
-  "channels": {
-    "dm": {
-      "policy": "pairing"
-    }
-  },
   "gateway": {
-    "bind": "loopback"
+    "bind": "lan",
+    "mode": "local"
   }
 }
 EOF
+
+# Ensure container (uid 1000) can read/write
+sudo chown 1000:1000 /home/openclaw/.openclaw/openclaw.json
 ```
 
-### 4.9 Setup Caddy Reverse Proxy
+### 4.9 Setup SSL Certificates (Cloudflare Origin CA)
+
+Copy the Cloudflare Origin CA certificate and private key to the server:
 
 ```bash
 #!/bin/bash
-sudo mkdir -p /etc/caddy
+# Create certs directory
+sudo mkdir -p /etc/caddy/certs
 
-# Determine Caddyfile based on whether domain is configured
-if [ -n "${DOMAIN:-}" ]; then
-    sudo tee /etc/caddy/Caddyfile << EOF
+# Copy certificate and key (from local certs/ directory)
+# These should be generated from Cloudflare Dashboard > SSL/TLS > Origin Server
+sudo tee /etc/caddy/certs/origin.pem << 'EOF'
+-----BEGIN CERTIFICATE-----
+<YOUR_CLOUDFLARE_ORIGIN_CA_CERTIFICATE>
+-----END CERTIFICATE-----
+EOF
+
+sudo tee /etc/caddy/certs/origin.key << 'EOF'
+-----BEGIN PRIVATE KEY-----
+<YOUR_CLOUDFLARE_ORIGIN_CA_PRIVATE_KEY>
+-----END PRIVATE KEY-----
+EOF
+
+# Set secure permissions
+sudo chmod 644 /etc/caddy/certs/origin.pem
+sudo chmod 600 /etc/caddy/certs/origin.key
+```
+
+### 4.10 Setup Caddy Reverse Proxy (SSL-Only)
+
+```bash
+#!/bin/bash
+sudo mkdir -p /etc/caddy /var/log/caddy
+
+# SSL-only configuration using Cloudflare Origin CA
+# Port 80 is blocked at firewall level - no HTTP at all
+sudo tee /etc/caddy/Caddyfile << 'EOF'
 {
-    email ${LETSENCRYPT_EMAIL}
+    # Disable automatic HTTPS - we're using Cloudflare Origin CA
+    auto_https off
 }
 
-${DOMAIN} {
+:443 {
+    tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
+
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
@@ -703,8 +724,6 @@ ${DOMAIN} {
     reverse_proxy localhost:18789 {
         header_up Host {host}
         header_up X-Real-IP {remote}
-        header_up X-Forwarded-For {remote}
-        header_up X-Forwarded-Proto {scheme}
     }
 
     log {
@@ -715,52 +734,35 @@ ${DOMAIN} {
     }
 }
 EOF
-else
-    # No domain — serve on IP with self-signed cert
-    sudo tee /etc/caddy/Caddyfile << 'EOF'
-:443 {
-    tls internal
 
-    reverse_proxy localhost:18789 {
-        header_up Host {host}
-        header_up X-Real-IP {remote}
-        header_up X-Forwarded-For {remote}
-    }
-}
-
-:80 {
-    redir https://{host}{uri} permanent
-}
-EOF
-fi
-
-# Run Caddy
+# Run Caddy with certificate volumes
 docker run -d \
     --name caddy \
     --restart unless-stopped \
     --network host \
     -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
+    -v /etc/caddy/certs:/etc/caddy/certs:ro \
     -v caddy_data:/data \
     -v caddy_config:/config \
     -v /var/log/caddy:/var/log/caddy \
     caddy:2-alpine
 ```
 
-### 4.10 Build and Start OpenClaw
+### 4.11 Build and Start OpenClaw
 
 ```bash
 #!/bin/bash
 cd /home/openclaw/openclaw
 
 # Build image
-sudo -u openclaw docker compose build
+sudo -u openclaw docker build -t openclaw:local .
 
 # Start services
 sudo -u openclaw docker compose up -d
 
 # Check status
-docker compose ps
-docker compose logs -f openclaw-gateway
+sudo -u openclaw docker compose ps
+sudo docker logs --tail 20 openclaw-openclaw-gateway-1
 ```
 
 ---
@@ -784,9 +786,9 @@ EOF
 
 ```bash
 #!/bin/bash
+# IMPORTANT: Use host network mode for prometheus, alertmanager, and cadvisor
+# to access WireGuard network (10.0.0.x)
 sudo -u openclaw tee /home/openclaw/monitoring/docker-compose.yml << 'EOF'
-version: '3.8'
-
 services:
   prometheus:
     image: prom/prometheus:latest
@@ -797,14 +799,12 @@ services:
       - ./alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-lifecycle'
-    ports:
-      - "127.0.0.1:9090:9090"
-    networks:
-      - monitoring-net
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    # IMPORTANT: Use host network to reach WireGuard IPs
+    network_mode: host
 
   grafana:
     image: grafana/grafana:latest
@@ -832,7 +832,7 @@ services:
       - loki_data:/loki
     command: -config.file=/etc/loki/local-config.yaml
     ports:
-      - "10.0.0.2:3100:3100"  # Only on WireGuard interface
+      - "10.0.0.2:3100:3100"
     networks:
       - monitoring-net
 
@@ -844,21 +844,19 @@ services:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
     command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
-      - '--storage.path=/alertmanager'
-    ports:
-      - "127.0.0.1:9093:9093"
-    networks:
-      - monitoring-net
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    # IMPORTANT: Use host network for Prometheus access
+    network_mode: host
 
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
     restart: unless-stopped
     command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -874,10 +872,8 @@ services:
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-    ports:
-      - "127.0.0.1:8080:8080"
-    networks:
-      - monitoring-net
+    # IMPORTANT: Use host network for Prometheus access
+    network_mode: host
 
 networks:
   monitoring-net:
@@ -895,6 +891,8 @@ EOF
 
 ```bash
 #!/bin/bash
+# IMPORTANT: Since Prometheus runs on host network, use localhost for local services
+# and 10.0.0.1 for VPS-1 metrics via WireGuard
 sudo -u openclaw tee /home/openclaw/monitoring/prometheus.yml << 'EOF'
 global:
   scrape_interval: 15s
@@ -903,41 +901,41 @@ global:
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: ['alertmanager:9093']
+        - targets: ["localhost:9093"]
 
 rule_files:
   - alerts.yml
 
 scrape_configs:
-  - job_name: 'prometheus'
+  - job_name: "prometheus"
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: ["localhost:9090"]
 
   # Local VPS-2 metrics
-  - job_name: 'node-exporter-local'
+  - job_name: "node-exporter-local"
     static_configs:
-      - targets: ['localhost:9100']
+      - targets: ["localhost:9100"]
         labels:
-          host: 'observe'
+          host: "observe"
 
-  - job_name: 'cadvisor-local'
+  - job_name: "cadvisor-local"
     static_configs:
-      - targets: ['cadvisor:8080']
+      - targets: ["localhost:8080"]
         labels:
-          host: 'observe'
+          host: "observe"
 
   # Remote VPS-1 metrics (via WireGuard)
-  - job_name: 'node-exporter-openclaw'
+  - job_name: "node-exporter-openclaw"
     static_configs:
-      - targets: ['10.0.0.1:9100']
+      - targets: ["10.0.0.1:9100"]
         labels:
-          host: 'openclaw'
+          host: "openclaw"
 
-  - job_name: 'openclaw-gateway'
+  - job_name: "openclaw-gateway"
     static_configs:
-      - targets: ['10.0.0.1:18789']
+      - targets: ["10.0.0.1:18789"]
         labels:
-          host: 'openclaw'
+          host: "openclaw"
     metrics_path: /metrics
     scrape_timeout: 10s
 EOF
@@ -947,6 +945,7 @@ EOF
 
 ```bash
 #!/bin/bash
+# IMPORTANT: Use proper YAML - do not escape $ in template variables
 sudo -u openclaw tee /home/openclaw/monitoring/alerts.yml << 'EOF'
 groups:
   - name: openclaw
@@ -998,17 +997,15 @@ global:
   resolve_timeout: 5m
 
 route:
-  group_by: ['alertname', 'host']
+  group_by: ["alertname", "host"]
   group_wait: 10s
   group_interval: 10s
   repeat_interval: 1h
-  receiver: 'default'
+  receiver: "default"
 
 receivers:
-  - name: 'default'
+  - name: "default"
     # Configure webhooks, email, Slack, etc. as needed
-    # webhook_configs:
-    #   - url: 'http://localhost:5001/'
 EOF
 ```
 
@@ -1016,6 +1013,7 @@ EOF
 
 ```bash
 #!/bin/bash
+# IMPORTANT: Use schema v13 with tsdb store (required by newer Loki versions)
 sudo -u openclaw tee /home/openclaw/monitoring/loki-config.yml << 'EOF'
 auth_enabled: false
 
@@ -1038,18 +1036,18 @@ common:
 schema_config:
   configs:
     - from: 2020-10-24
-      store: boltdb-shipper
+      store: tsdb
       object_store: filesystem
-      schema: v11
+      schema: v13
       index:
         prefix: index_
         period: 24h
 
 ruler:
-  alertmanager_url: http://alertmanager:9093
+  alertmanager_url: http://localhost:9093
 
 limits_config:
-  retention_period: 720h  # 30 days
+  retention_period: 720h
 EOF
 ```
 
@@ -1057,6 +1055,7 @@ EOF
 
 ```bash
 #!/bin/bash
+# IMPORTANT: Use localhost URLs since services run on host network
 sudo -u openclaw tee /home/openclaw/monitoring/grafana/provisioning/datasources/datasources.yml << 'EOF'
 apiVersion: 1
 
@@ -1064,58 +1063,95 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    url: http://localhost:9090
     isDefault: true
     editable: false
 
   - name: Loki
     type: loki
     access: proxy
-    url: http://loki:3100
+    url: http://localhost:3100
     editable: false
 EOF
 ```
 
-### 5.8 Setup Caddy for Grafana
+### 5.8 Setup SSL Certificates (Cloudflare Origin CA)
+
+Copy the same Cloudflare Origin CA certificate and private key to VPS-2:
 
 ```bash
 #!/bin/bash
-sudo mkdir -p /etc/caddy
+# Create certs directory
+sudo mkdir -p /etc/caddy/certs
 
-if [ -n "${GRAFANA_DOMAIN:-}" ]; then
-    sudo tee /etc/caddy/Caddyfile << EOF
+# Copy certificate and key (same wildcard cert as VPS-1)
+sudo tee /etc/caddy/certs/origin.pem << 'EOF'
+-----BEGIN CERTIFICATE-----
+<YOUR_CLOUDFLARE_ORIGIN_CA_CERTIFICATE>
+-----END CERTIFICATE-----
+EOF
+
+sudo tee /etc/caddy/certs/origin.key << 'EOF'
+-----BEGIN PRIVATE KEY-----
+<YOUR_CLOUDFLARE_ORIGIN_CA_PRIVATE_KEY>
+-----END PRIVATE KEY-----
+EOF
+
+# Set secure permissions
+sudo chmod 644 /etc/caddy/certs/origin.pem
+sudo chmod 600 /etc/caddy/certs/origin.key
+```
+
+### 5.9 Setup Caddy for Grafana (SSL-Only)
+
+```bash
+#!/bin/bash
+sudo mkdir -p /etc/caddy /var/log/caddy
+
+# SSL-only configuration using Cloudflare Origin CA
+sudo tee /etc/caddy/Caddyfile << 'EOF'
 {
-    email ${LETSENCRYPT_EMAIL}
+    # Disable automatic HTTPS - we're using Cloudflare Origin CA
+    auto_https off
 }
 
-${GRAFANA_DOMAIN} {
-    reverse_proxy localhost:3000
-}
-EOF
-else
-    sudo tee /etc/caddy/Caddyfile << 'EOF'
 :443 {
-    tls internal
-    reverse_proxy localhost:3000
-}
+    tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin.key
 
-:80 {
-    redir https://{host}{uri} permanent
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        -Server
+    }
+
+    reverse_proxy localhost:3000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+    }
 }
 EOF
-fi
 
 docker run -d \
     --name caddy \
     --restart unless-stopped \
     --network host \
     -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
+    -v /etc/caddy/certs:/etc/caddy/certs:ro \
     -v caddy_data:/data \
     -v caddy_config:/config \
+    -v /var/log/caddy:/var/log/caddy \
     caddy:2-alpine
 ```
 
-### 5.9 Create Environment File and Start
+### 5.10 Create Environment File and Start
 
 ```bash
 #!/bin/bash
@@ -1134,7 +1170,7 @@ sudo -u openclaw docker compose up -d
 echo ""
 echo "========================================="
 echo "Grafana Credentials:"
-echo "  URL: https://${GRAFANA_DOMAIN:-<VPS2-IP>}"
+echo "  URL: http://${VPS2_IP:-<VPS2-IP>}"
 echo "  User: admin"
 echo "  Password: ${GRAFANA_PASSWORD}"
 echo "========================================="
@@ -1176,12 +1212,9 @@ fi
 
 # Cleanup old backups
 find "${BACKUP_DIR}" -name "openclaw_backup_*.tar.gz" -mtime +${RETENTION_DAYS} -delete
-
-# Optional: Copy to VPS-2 via WireGuard
-# scp "${BACKUP_FILE}" openclaw@10.0.0.2:/home/openclaw/backups/
 EOF
 
-chmod +x /home/openclaw/scripts/backup.sh
+sudo -u openclaw chmod +x /home/openclaw/scripts/backup.sh
 ```
 
 ### 6.2 Schedule Cron Job
@@ -1209,40 +1242,48 @@ ping -c 3 10.0.0.1
 
 ```bash
 # Check containers
-docker compose ps
+sudo -u openclaw docker compose ps
 
 # Check logs
-docker compose logs openclaw-gateway
+sudo docker logs --tail 20 openclaw-openclaw-gateway-1
 
-# Test health endpoint
-curl -s http://localhost:18789/health
+# Test internal endpoint
+curl -s http://localhost:18789/ | grep -o "<title>.*</title>"
 
-# Get dashboard URL
-docker compose --profile cli run --rm openclaw-cli dashboard --no-open
+# Test via Caddy (HTTPS only - port 80 blocked)
+curl -sk https://localhost:443/ | grep -o "<title>.*</title>"
+
+# Verify port 80 is blocked (should fail/timeout)
+curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expected)"
 ```
 
 ### 7.3 Verify Monitoring (VPS-2)
 
 ```bash
 # Check containers
-docker compose ps
+sudo -u openclaw docker compose ps
 
-# Test Prometheus targets
-curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].health'
+# Test Prometheus targets (should show all targets as "up")
+curl -s http://localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | .scrapePool + ": " + .health'
 
 # Test Loki
 curl -s http://localhost:3100/ready
 
-# Access Grafana
-echo "Grafana: https://<VPS2-IP> or https://${GRAFANA_DOMAIN}"
+# Test Grafana via Caddy (HTTPS only)
+curl -sk https://localhost:443/ | head -5
+
+# Verify port 80 is blocked (should fail/timeout)
+curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expected)"
 ```
 
 ### 7.4 Test End-to-End
 
-1. Access OpenClaw dashboard via `https://<VPS1-IP>` or `https://<DOMAIN>`
-2. Pair a messaging channel (e.g., Telegram)
-3. Send a test message to your OpenClaw bot
-4. Check Grafana for metrics and logs flowing from VPS-1
+1. Configure Cloudflare DNS to point your domain to the VPS IPs (use Cloudflare proxy for SSL termination)
+2. In Cloudflare SSL/TLS settings, set encryption mode to "Full (strict)"
+3. Access OpenClaw dashboard via `https://<your-domain>`
+4. Access Grafana via `https://<grafana-subdomain>` (login: admin / generated password)
+5. Verify Prometheus targets in Grafana → Explore → Prometheus
+6. Check logs flowing from VPS-1 in Grafana → Explore → Loki
 
 ---
 
@@ -1252,10 +1293,10 @@ echo "Grafana: https://<VPS2-IP> or https://${GRAFANA_DOMAIN}"
 
 ```bash
 # OpenClaw VPS
-ssh -i ~/.ssh/openclaw_ed25519 openclaw@<VPS1-IP>
+ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS1-IP>
 
 # Observability VPS
-ssh -i ~/.ssh/openclaw_ed25519 openclaw@<VPS2-IP>
+ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS2-IP>
 ```
 
 ### Service Management
@@ -1263,17 +1304,17 @@ ssh -i ~/.ssh/openclaw_ed25519 openclaw@<VPS2-IP>
 ```bash
 # VPS-1: OpenClaw
 cd /home/openclaw/openclaw
-docker compose up -d      # Start
-docker compose down       # Stop
-docker compose logs -f    # Logs
-docker compose ps         # Status
+sudo -u openclaw docker compose up -d      # Start
+sudo -u openclaw docker compose down       # Stop
+sudo -u openclaw docker compose logs -f    # Logs
+sudo -u openclaw docker compose ps         # Status
 
 # VPS-2: Monitoring
 cd /home/openclaw/monitoring
-docker compose up -d
-docker compose down
-docker compose logs -f
-docker compose ps
+sudo -u openclaw docker compose up -d
+sudo -u openclaw docker compose down
+sudo -u openclaw docker compose logs -f
+sudo -u openclaw docker compose ps
 ```
 
 ### WireGuard
@@ -1298,29 +1339,31 @@ sudo ufw reload           # Reload
 ### Both VPSs
 
 - [ ] SSH hardened (key-only, no root)
-- [ ] UFW firewall enabled
+- [ ] UFW firewall enabled (port 80 blocked, only 443 open)
 - [ ] Fail2ban running
 - [ ] Automatic security updates enabled
 - [ ] Kernel hardening applied
 - [ ] WireGuard tunnel established
+- [ ] Cloudflare Origin CA certificate installed
+- [ ] Caddy serving HTTPS-only with Origin CA cert
 
 ### VPS-1 (OpenClaw)
 
 - [ ] Sysbox runtime installed
 - [ ] OpenClaw gateway running with Sysbox
-- [ ] Gateway bound to localhost only
-- [ ] Caddy reverse proxy with TLS
-- [ ] Node Exporter shipping metrics
+- [ ] Gateway bound to localhost (Caddy handles external)
+- [ ] Caddy reverse proxy with TLS (port 443 only)
+- [ ] Node Exporter shipping metrics (port 9100 open to WireGuard)
 - [ ] Promtail shipping logs
 - [ ] Backup cron job scheduled
 
 ### VPS-2 (Observability)
 
-- [ ] Prometheus scraping both VPSs
+- [ ] Prometheus scraping both VPSs (all targets UP)
 - [ ] Grafana accessible with strong password
 - [ ] Loki receiving logs
 - [ ] Alertmanager configured
-- [ ] Caddy reverse proxy with TLS
+- [ ] Caddy reverse proxy with TLS (port 443 only)
 
 ---
 
@@ -1346,8 +1389,11 @@ sudo journalctl -u wg-quick@wg0
 # Check Sysbox
 sudo systemctl status sysbox
 
-# Check logs
-docker compose logs openclaw-gateway
+# Check logs for config errors
+sudo docker logs openclaw-openclaw-gateway-1
+
+# Common issue: Invalid config keys in openclaw.json
+# Solution: Keep config minimal, only use documented keys
 
 # Check resources
 docker system df
@@ -1355,23 +1401,61 @@ free -h
 df -h
 ```
 
-### Prometheus Not Scraping
+### Prometheus Not Scraping VPS-1 Targets
 
 ```bash
-# Check targets
-curl http://localhost:9090/api/v1/targets
+# Test connectivity via WireGuard
+curl http://10.0.0.1:9100/metrics | head -5
 
-# Test connectivity to VPS-1
-curl http://10.0.0.1:9100/metrics
+# If connection refused: Check UFW on VPS-1
+sudo ufw status | grep 9100
+# Add rule if missing:
+sudo ufw allow from 10.0.0.0/24 to any port 9100
 ```
 
 ### Logs Not Appearing in Loki
 
 ```bash
 # Check Promtail on VPS-1
-docker compose logs promtail
+sudo docker logs promtail
 
 # Check Loki on VPS-2
-docker compose logs loki
+sudo docker logs loki
 curl http://localhost:3100/ready
+
+# Common issue: Schema version mismatch
+# Solution: Use schema v13 with tsdb store in loki-config.yml
 ```
+
+### SSH Service Name on Ubuntu
+
+```bash
+# Ubuntu uses 'ssh' not 'sshd'
+sudo systemctl restart ssh    # Correct
+sudo systemctl restart sshd   # Wrong - will fail
+```
+
+---
+
+## Key Deployment Notes
+
+1. **SSH service**: Ubuntu uses `ssh` not `sshd` as the service name
+2. **Docker networks**: Use 172.30.x.x subnets to avoid conflicts with Docker's default 172.20.0.0/16
+3. **File ownership**: Container runs as uid 1000 (node), so `.openclaw` directory must be owned by uid 1000
+4. **OpenClaw config**: Keep `openclaw.json` minimal - it rejects unknown keys
+5. **Gateway startup**: Use `--allow-unconfigured` flag to start without full setup
+6. **UFW on VPS-1**: Must allow ports 9100 and 18789 from WireGuard network (10.0.0.0/24)
+7. **Prometheus networking**: Use host network mode to access WireGuard IPs
+8. **Loki schema**: Use v13 with tsdb store (required by newer Loki versions)
+9. **SSL-only configuration**:
+   - Port 80 is blocked at firewall level (UFW)
+   - Use Cloudflare Origin CA certificates for TLS
+   - Set Cloudflare SSL mode to "Full (strict)"
+   - Origin CA certs don't support OCSP stapling (warning in Caddy logs is expected)
+   - Same wildcard cert can be used on both VPSs
+10. **Container security hardening**:
+    - `build:` section required in override for `docker compose build` to work
+    - `read_only: true` makes root filesystem read-only (security hardening)
+    - `tmpfs` mounts provide writable `/tmp`, `/var/tmp`, `/run` directories
+    - `user: "1000:1000"` runs container as non-root (node user)
+    - Gateway writes logs to `/tmp/openclaw/` which is on tmpfs mount

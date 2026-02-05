@@ -74,11 +74,14 @@ OVHCloud typically provisions VPSs within 5-15 minutes. You'll receive:
 2. Go to **Bare Metal Cloud → VPS**
 3. Note the **IPv4 addresses** for both VPSs
 
-Record them here:
+Record them in openclaw-config.env:
 
 ```
-VPS-1 (openclaw):  <VPS1_IP>
-VPS-2 (observe):  <VPS2_IP>
+VPS1_IP=15.x.x.x
+VPS1_HOSTNAME=openclaw
+
+VPS2_IP=15.x.x.x
+VPS2_HOSTNAME=observe
 ```
 
 ---
@@ -138,116 +141,9 @@ Expected output:
 
 ---
 
-## Step 6: Create DNS Records (Optional but Recommended)
+### Step 6: Continue with Steps in [README.md](./README.md)
 
-If you have a domain, create A records pointing to your VPSs:
-
-| Record | Type | Value |
-|--------|------|-------|
-| `openclaw.yourdomain.com` | A | `<VPS-1-IP>` |
-| `grafana.yourdomain.com` | A | `<VPS-2-IP>` |
-
-This enables:
-
-- TLS certificates via Let's Encrypt
-- Clean URLs instead of IP addresses
-
-If you don't have a domain, you can still proceed — just use IP addresses directly.
-
----
-
-## Step 7: Gather Required Credentials
-
-Before running Claude Code, have these ready:
-
-### Required
-
-- [ ] **VPS-1 IP address**: `_______________`
-- [ ] **VPS-2 IP address**: `_______________`
-- [ ] **SSH private key path**: `~/.ssh/ovh_openclaw_ed25519`
-- [ ] **Anthropic API key**: `sk-ant-...` (from [console.anthropic.com](https://console.anthropic.com))
-
-### Optional (for messaging channels)
-
-- [ ] **Telegram Bot Token**: Create via [@BotFather](https://t.me/BotFather)
-- [ ] **Discord Bot Token**: From [Discord Developer Portal](https://discord.com/developers/applications)
-- [ ] **Slack Bot Token**: From [Slack API](https://api.slack.com/apps)
-
-### Optional (for DNS/TLS)
-
-- [ ] **Domain name**: `_______________`
-- [ ] **Email for Let's Encrypt**: `_______________`
-
----
-
-## Step 8: Create Configuration File for Claude Code
-
-Create a file with your configuration that Claude Code will use:
-
-```bash
-# On your local machine, create this file
-cat > ~/openclaw-config.env << 'EOF'
-# VPS Configuration
-VPS1_IP=<your-vps-1-ip>
-VPS1_HOSTNAME=openclaw
-VPS2_IP=<your-vps-2-ip>
-VPS2_HOSTNAME=observe
-
-# SSH Configuration
-SSH_KEY_PATH=~/.ssh/ovh_openclaw_ed25519
-SSH_USER=ubuntu
-
-# Domain Configuration (leave empty if not using)
-DOMAIN=
-LETSENCRYPT_EMAIL=
-
-# API Keys
-ANTHROPIC_API_KEY=
-
-# Messaging Channels (leave empty if not using)
-TELEGRAM_BOT_TOKEN=
-DISCORD_BOT_TOKEN=
-SLACK_BOT_TOKEN=
-SLACK_APP_TOKEN=
-EOF
-```
-
-Fill in your actual values, then verify:
-
-```bash
-cat ~/openclaw-config.env
-```
-
----
-
-## Step 9: Hand Off to Claude Code
-
-You're now ready for Claude Code to automate the rest. Provide Claude Code with:
-
-1. **This configuration file**: `~/openclaw-config.env`
-2. **The CLAUDE.md file**: Contains all instructions for automated setup
-3. **SSH access**: Claude Code will need to run commands on both VPSs
-
-### What Claude Code Will Do
-
-1. **On both VPSs:**
-   - System updates and hardening
-   - Create dedicated `openclaw` user
-   - Configure UFW firewall
-   - Set up Fail2ban
-   - Install Docker
-   - Set up WireGuard tunnel between VPSs
-
-2. **On VPS-1 (OpenClaw):**
-   - Install Sysbox runtime
-   - Deploy OpenClaw gateway
-   - Configure Caddy reverse proxy
-   - Set up Node Exporter + Promtail (ships metrics/logs to VPS-2)
-
-3. **On VPS-2 (Observability):**
-   - Deploy Prometheus, Grafana, Loki, Alertmanager
-   - Configure dashboards and alerting
-   - Set up log aggregation
+Finish the setup steps in README.md and hand off to claude to implement.
 
 ---
 

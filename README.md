@@ -6,7 +6,7 @@ This repository contains everything needed to deploy OpenClaw across two OVHClou
 
 | VPS | Role | Services |
 |-----|------|----------|
-| **VPS-1** | OpenClaw | Gateway, Sysbox runtime, Caddy, Node Exporter, Promtail |
+| **VPS-1** | OpenClaw | Gateway, Sysbox runtime, Node Exporter, Promtail |
 | **VPS-2** | Observability | Prometheus, Grafana, Loki, Alertmanager, cAdvisor |
 
 The two VPSs communicate over a secure WireGuard tunnel (`10.0.0.1` ↔ `10.0.0.2`).
@@ -20,8 +20,8 @@ The two VPSs communicate over a secure WireGuard tunnel (`10.0.0.1` ↔ `10.0.0.
 - Anthropic API key for OpenClaw (placeholder can be used)
 - (Optional) Domain with Cloudflare DNS for SSL
 
-Anthropic API key is needed for OpenClaw to run. However it can be added after
-setup is complete.
+Anthropic API key is needed for OpenClaw to run.
+However, it can be added after setup is complete.
 
 ---
 
@@ -36,84 +36,108 @@ Follow the detailed instructions in **[ovh_setup_guide.md](./ovh_setup_guide.md)
 3. Generate and configure SSH keys
 4. Verify SSH access to both VPSs
 5. Create the `openclaw-config.env` configuration file
+6. Create or add Anthropic Key, Telegram Bot, etc. to env file
 
-### Step 2: Generate SSL Origin Certificates (Cloudflare)
-
-If using Cloudflare for your domain, generate Origin CA certificates for secure communication between Cloudflare and your origin servers.
-
-#### 2.1 Create Origin Certificate in Cloudflare
-
-1. Log into [Cloudflare Dashboard](https://dash.cloudflare.com)
-2. Select your domain
-3. Navigate to **SSL/TLS → Origin Server**
-4. Click **Create Certificate**
-5. Configure:
-   - **Private key type**: RSA (2048)
-   - **Hostnames**: `*.yourdomain.com` and `yourdomain.com`
-   - **Certificate validity**: 15 years (recommended)
-6. Click **Create**
-7. **Important**: Copy both the certificate and private key immediately (private key is only shown once)
-
-#### 2.2 Save Certificates Locally
+### Step 2: Create Config Env File
 
 ```bash
-# Create certs directory
-mkdir -p certs
-
-# Save the certificate (paste from Cloudflare)
-cat > certs/origin_yourdomain.pem << 'EOF'
------BEGIN CERTIFICATE-----
-<paste certificate here>
------END CERTIFICATE-----
-EOF
-
-# Save the private key (paste from Cloudflare)
-cat > certs/origin_yourdomain.key << 'EOF'
------BEGIN PRIVATE KEY-----
-<paste private key here>
------END PRIVATE KEY-----
-EOF
-
-# Secure the files
-chmod 600 certs/*.key
-chmod 644 certs/*.pem
+cp openclaw-config.env.example openclaw-config.env
 ```
 
-#### 2.3 Configure Cloudflare SSL Settings
+### Step 2.1: Add Keys for OpenClaw (for messaging channels)
 
-1. In Cloudflare Dashboard → **SSL/TLS → Overview**
-2. Set encryption mode to **Full (strict)**
-3. This ensures end-to-end encryption with certificate validation
+These can be optionally added after deploy. Anthropic Key is required for OpenClaw to initialize.
+Messaging channel keys are not needed if using the OpenClaw UI for chat.
 
-#### 2.4 Create DNS Records
+- [ ] **Anthropic API key**: `sk-ant-...` (from [console.anthropic.com](https://console.anthropic.com))
+- [ ] **Telegram Bot Token**: Create via [@BotFather](https://t.me/BotFather)
+- [ ] **Discord Bot Token**: From [Discord Developer Portal](https://discord.com/developers/applications)
+- [ ] **Slack Bot Token**: From [Slack API](https://api.slack.com/apps)
 
-In Cloudflare Dashboard → **DNS**:
+Fill in your actual values in openclaw-config.env.
 
-| Type | Name | Content | Proxy |
-|------|------|---------|-------|
-| A | `claw` | `<VPS-1-IP>` | Proxied (orange cloud) |
-| A | `observe` | `<VPS-2-IP>` | Proxied (orange cloud) |
+### Step 2.2: Choose Networking Option
+
+| Option | What You Need | Best For |
+|--------|---------------|----------|
+| **Cloudflare Tunnel** (Recommended) | Cloudflare account with domain | Maximum security, zero exposed ports |
+| **Caddy** | Cloudflare Origin CA certificate | Simpler setup, direct origin access |
+
+Update `openclaw-config.env` with your choice:
+
+```bash
+NETWORKING_OPTION=cloudflare-tunnel  # or "caddy"
+DOMAIN_OPENCLAW=claw.example.com
+DOMAIN_GRAFANA=observe.example.com
+```
+
+**If using Caddy:** Follow [docs/CLOUDFLARE-SSL.md](docs/CLOUDFLARE-SSL.md) to generate Origin CA certificates first.
+
+**If using Cloudflare Tunnel:** No certificates needed - skip to Step 3.
 
 ### Step 3: Deploy with Claude Code
 
-1. Ensure your SSH key is loaded:
+You're now ready for Claude Code to automate the rest. Provide Claude Code with:
+
+1. **The configuration file**: `~/openclaw-config.env`
+2. **The CLAUDE.md file**: Contains all instructions for automated setup
+3. **SSH access**: Claude Code will need to run commands on both VPSs
+
+4. Ensure your SSH key is loaded:
 
    ```bash
    ssh-add ~/.ssh/ovh_openclaw_ed25519
    ```
 
-2. Open Claude Code in this directory and provide:
-   - The `openclaw-config.env` file
-   - The `CLAUDE.md` deployment guide
-   - The SSL certificates in `certs/`
+5. Open Claude Code in this directory
 
-3. Ask Claude to deploy OpenClaw following CLAUDE.md
+   ```bash
+   claude
+   ```
+
+6. Ask Claude to deploy OpenClaw
+
+   **Example Prompt:**
+   > Deploy the VPS servers following CLAUDE.md and using settings in openclaw-config.env
+
+### What Claude Code Will Do
+
+1. **On both VPSs:**
+   - System updates and hardening
+   - Create dedicated `openclaw` user
+   - Configure UFW firewall
+   - Set up Fail2ban
+   - Install Docker
+   - Set up WireGuard tunnel between VPSs
+
+2. **On VPS-1 (OpenClaw):**
+   - Install Sysbox runtime
+   - Deploy OpenClaw gateway
+   - Configure Caddy reverse proxy
+   - Set up Node Exporter + Promtail (ships metrics/logs to VPS-2)
+   - Configure Cloudflare Tunnel or Caddy
+
+3. **On VPS-2 (Observability):**
+   - Deploy Prometheus, Grafana, Loki, Alertmanager
+   - Configure dashboards and alerting
+   - Set up log aggregation
+   - Configure Cloudflare Tunnel or Caddy
 
 ---
 
+## Post-Deployment: Testing
+
+Optionally ask Claude to run end-to-end tests:
+
+> Run the tests in docts/TESTING.md using devtools mcp
+
+**DevTools MCP** must already be installed and enabled in Claude Code to allow browser automation tests.
+
+Claude will run a series of checks via ssh on the two VPS, then use a browser to check the UIs.
+
 ## Post-Deployment: Getting Started
 
-### Access OpenClaw Dashboard
+### Access Your OpenClaw Dashboard
 
 1. Navigate to your OpenClaw URL:
    - With domain: `https://claw.yourdomain.com/_openclaw/_admin`
@@ -122,8 +146,8 @@ In Cloudflare Dashboard → **DNS**:
 2. **Important**: You need the gateway token to access the admin interface:
 
    ```bash
-   # SSH to VPS-1 and get the token (note: SSH uses port 222)
-   ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-1-IP>
+   # SSH to VPS-1 and get the token (note: SSH uses port 222, user is adminclaw)
+   ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS-1-IP>
    cat /home/openclaw/openclaw/.env | grep OPENCLAW_GATEWAY_TOKEN
    ```
 
@@ -138,8 +162,8 @@ In Cloudflare Dashboard → **DNS**:
 2. Get the Grafana password:
 
    ```bash
-   # SSH to VPS-2 and get the password (note: SSH uses port 222)
-   ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 openclaw@<VPS-2-IP>
+   # SSH to VPS-2 and get the password (note: SSH uses port 222, user is adminclaw)
+   ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS-2-IP>
    cat /home/openclaw/monitoring/.env | grep GRAFANA_PASSWORD
    ```
 
@@ -175,19 +199,19 @@ curl -k https://<VPS-2-IP>/_observe/grafana/api/health
 ### Service Status
 
 ```bash
-# On VPS-1 (SSH port 222)
-ssh -p 222 openclaw@<VPS-1-IP> "cd /home/openclaw/openclaw && docker compose ps"
+# On VPS-1 (SSH port 222, user adminclaw)
+ssh -p 222 adminclaw@<VPS-1-IP> "cd /home/openclaw/openclaw && sudo -u openclaw docker compose ps"
 
-# On VPS-2 (SSH port 222)
-ssh -p 222 openclaw@<VPS-2-IP> "cd /home/openclaw/monitoring && docker compose ps"
+# On VPS-2 (SSH port 222, user adminclaw)
+ssh -p 222 adminclaw@<VPS-2-IP> "cd /home/openclaw/monitoring && sudo -u openclaw docker compose ps"
 ```
 
 ### WireGuard Tunnel
 
 ```bash
-# On VPS-1 (SSH port 222)
-ssh -p 222 openclaw@<VPS-1-IP> "sudo wg show"
-ssh -p 222 openclaw@<VPS-1-IP> "ping -c 3 10.0.0.2"
+# On VPS-1 (SSH port 222, user adminclaw)
+ssh -p 222 adminclaw@<VPS-1-IP> "sudo wg show"
+ssh -p 222 adminclaw@<VPS-1-IP> "ping -c 3 10.0.0.2"
 ```
 
 For comprehensive testing, see **[docs/TESTING.md](./docs/TESTING.md)**.
@@ -198,15 +222,25 @@ For comprehensive testing, see **[docs/TESTING.md](./docs/TESTING.md)**.
 
 ```
 openclaw-vps/
-├── README.md                 # This file
-├── CLAUDE.md                 # Deployment guide for Claude Code
+├── README.md                 # This file (for users)
+├── CLAUDE.md                 # Deployment orchestration (for Claude)
 ├── ovh_setup_guide.md        # OVHCloud account setup instructions
 ├── openclaw-config.env       # Configuration (contains secrets)
-├── certs/                    # SSL certificates
-│   ├── origin_*.pem          # Origin CA certificate
-│   └── origin_*.key          # Origin CA private key
-└── docs/
-    └── TESTING.md            # Testing instructions
+├── docs/
+│   ├── CLOUDFLARE-SSL.md     # SSL certificate setup (Caddy only)
+│   ├── CLOUDFLARE-TUNNEL.md  # Cloudflare Tunnel reference
+│   └── TESTING.md            # Testing instructions
+└── playbooks/                # Deployment playbooks (for Claude)
+    ├── 01-base-setup.md
+    ├── 02-wireguard.md
+    ├── 03-docker.md
+    ├── 04-vps1-openclaw.md
+    ├── 05-vps2-observability.md
+    ├── 06-backup.md
+    ├── 07-verification.md
+    └── networking/
+        ├── cloudflare-tunnel.md
+        └── caddy.md
 ```
 
 ---
@@ -217,7 +251,9 @@ openclaw-vps/
 
 - Ensure you're using the correct URL: `/_openclaw/_admin` (not just `/_admin`)
 - Verify the gateway token is correct
-- Check that Caddy is running: `docker ps | grep caddy`
+- Verify SSL networking is correct:
+  - Check Cloudflare Access if using Cloudflare Tunnel
+  - Check that Caddy is running if not using Cloudflare Tunnel: `docker ps | grep caddy`
 
 ### Can't Access Grafana
 
@@ -258,16 +294,16 @@ sudo ufw status | grep 51820
 
 ## Security Notes
 
+- **Two-user model**: `adminclaw` for SSH/admin, `openclaw` for app runtime (no SSH access)
 - **SSH uses port 222** (not 22) to avoid bot scanners - always use `-p 222`
 - **SSH key-only** - password authentication is disabled
-- **Openclaw user** has passwordless sudo for automation - remember the password you set during setup for console access
+- **Adminclaw user** has passwordless sudo for automation
 - **Obscured URL paths**: Services use non-standard paths to avoid bot scanners:
   - OpenClaw: `/_openclaw/` (admin at `/_openclaw/_admin`)
   - Grafana: `/_observe/grafana/`
 - Gateway token should be kept secret - it provides admin access
 - SSL certificates and private keys are sensitive - never commit to git
 - The `.gitignore` excludes `*.env` and `certs/` by default
-- All public access is HTTPS-only (port 443)
 - WireGuard tunnel encrypts all inter-VPS traffic
 
 ---

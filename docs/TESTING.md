@@ -30,6 +30,7 @@ cat /Users/joe/Development/openclaw/openclaw-vps/openclaw-config.env
 ```
 
 Extract these values:
+
 - `VPS1_IP` - OpenClaw VPS
 - `VPS2_IP` - Observability VPS
 - `SSH_KEY_PATH` - SSH key location
@@ -66,6 +67,7 @@ ssh -p 222 adminclaw@<VPS2_IP> "sudo wg show && ping -c 3 10.0.0.1"
 ```
 
 **Success criteria**:
+
 - `wg show` displays peer connection with recent handshake
 - Ping shows 0% packet loss
 
@@ -84,6 +86,7 @@ ssh -p 222 adminclaw@<VPS2_IP> "sudo ufw status"
 ```
 
 **Success criteria**:
+
 - Port 222/tcp: ALLOW (SSH on non-standard port)
 - Port 443/tcp: ALLOW (HTTPS)
 - Port 51820/udp: ALLOW (WireGuard)
@@ -102,6 +105,7 @@ ssh -p 222 adminclaw@<VPS1_IP> "cd /home/openclaw/openclaw && docker compose ps 
 ```
 
 **Expected services**:
+
 - `openclaw-gateway` - Up (healthy)
 - `node-exporter` - Up
 - `promtail` - Up
@@ -121,6 +125,7 @@ ssh -p 222 adminclaw@<VPS2_IP> "cd /home/openclaw/monitoring && docker compose p
 ```
 
 **Expected services**:
+
 - `prometheus` - Up
 - `grafana` - Up
 - `loki` - Up
@@ -176,13 +181,14 @@ Use the Chrome DevTools MCP to test the web interfaces.
 
 ```
 # Navigate to OpenClaw admin page (note: /_openclaw/_admin path)
-mcp__chrome-devtools__navigate_page(url="https://claw.ventureunknown.com/_openclaw/_admin")
+mcp__chrome-devtools__navigate_page(url="https://openclaw.yourdomain.com/_openclaw/_admin")
 
 # Take a snapshot to verify the page loaded
 mcp__chrome-devtools__take_snapshot()
 ```
 
 **Success criteria**:
+
 - Page loads without SSL errors
 - Shows OpenClaw admin interface or token prompt
 - No console errors related to connection failures
@@ -191,13 +197,14 @@ mcp__chrome-devtools__take_snapshot()
 
 ```
 # Navigate to Grafana (note: /_observe/grafana/ path)
-mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com/_observe/grafana/")
+mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com/_observe/grafana/")
 
 # Take a snapshot
 mcp__chrome-devtools__take_snapshot()
 ```
 
 **Success criteria**:
+
 - Page loads with valid SSL
 - Shows Grafana login page or dashboard
 - No console errors
@@ -215,15 +222,16 @@ mcp__chrome-devtools__list_console_messages(types=["error"])
 
 ```
 # Try root path - should redirect to /_openclaw/ or return 404
-mcp__chrome-devtools__navigate_page(url="https://claw.ventureunknown.com/")
+mcp__chrome-devtools__navigate_page(url="https://openclaw.yourdomain.com/")
 mcp__chrome-devtools__take_snapshot()
 
 # Try random path - should return 404
-mcp__chrome-devtools__navigate_page(url="https://claw.ventureunknown.com/random-path")
+mcp__chrome-devtools__navigate_page(url="https://openclaw.yourdomain.com/random-path")
 mcp__chrome-devtools__take_snapshot()
 ```
 
 **Success criteria**:
+
 - Root redirects to `/_openclaw/` or obscured path
 - Random paths return 404 (not proxied to backend)
 
@@ -238,6 +246,7 @@ ssh -p 222 adminclaw@<VPS2_IP> "sudo ss -tlnp | grep -E '(9090|3000|3100|9093|91
 ```
 
 **Success criteria** - Services should bind to these addresses:
+
 - `127.0.0.1:9090` - Prometheus (localhost only)
 - `127.0.0.1:3000` - Grafana (localhost only)
 - `10.0.0.2:3100` - Loki (WireGuard only)
@@ -259,6 +268,7 @@ ssh -p 222 adminclaw@<VPS2_IP> "curl -s http://127.0.0.1:9090/api/v1/targets | j
 ```
 
 **Success criteria**: These targets should show `"health": "up"`:
+
 - prometheus
 - node-exporter-local
 - cadvisor-local
@@ -301,7 +311,7 @@ Then use DevTools to test:
 
 ```
 # Navigate to Grafana login (note: /_observe/grafana/ path)
-mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com/_observe/grafana/login")
+mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com/_observe/grafana/login")
 mcp__chrome-devtools__take_snapshot()
 
 # Fill login form (adjust uids based on snapshot)
@@ -314,7 +324,7 @@ mcp__chrome-devtools__click(uid="<login-button-uid>")
 
 ```
 # Navigate to Explore page (note: /_observe/grafana/ path)
-mcp__chrome-devtools__navigate_page(url="https://observe.ventureunknown.com/_observe/grafana/explore")
+mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com/_observe/grafana/explore")
 mcp__chrome-devtools__take_snapshot()
 
 # Select Loki datasource and run a query
@@ -323,6 +333,7 @@ mcp__chrome-devtools__take_snapshot()
 ```
 
 **Success criteria**:
+
 - Loki datasource is available
 - Can query logs with `{job="docker"}` or `{host="openclaw"}`
 - Recent logs appear in results

@@ -15,15 +15,15 @@ This document describes how to secure OpenClaw behind Cloudflare Tunnel, elimina
 
 - Cloudflare account with your domain added
 - Domain DNS managed by Cloudflare
-- SSH access to VPS-1 (adminclaw@<VPS1_IP>, port 222)
+- SSH access to VPS-1 (<adminclaw@15.204.xxx.xxx>, port 222)
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────-┐
 │                         Internet                             │
 │                                                              │
-│    User ──► claw.ventureunknown.com ──► Cloudflare Edge     │
+│    User ──► openclaw.yourdomain.com ──► Cloudflare Edge      │
 │                                              │               │
 │                                    Cloudflare Access         │
 │                                        (auth check)          │
@@ -50,7 +50,7 @@ This document describes how to secure OpenClaw behind Cloudflare Tunnel, elimina
 ### Step 1: Install cloudflared
 
 ```bash
-ssh -p 222 adminclaw@<VPS1_IP>
+ssh -p 222 adminclaw@15.204.xxx.xxx
 
 # Download and install cloudflared
 curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
@@ -95,7 +95,7 @@ credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
   # OpenClaw Gateway (web UI and API)
-  - hostname: claw.ventureunknown.com
+  - hostname: openclaw.yourdomain.com
     service: http://localhost:18789
     originRequest:
       noTLSVerify: true
@@ -119,11 +119,12 @@ Route your domain through the tunnel:
 
 ```bash
 # This creates a CNAME record pointing to the tunnel
-cloudflared tunnel route dns openclaw claw.ventureunknown.com
+cloudflared tunnel route dns openclaw openclaw.yourdomain.com
 ```
 
 **Important:** This replaces the existing A record. In Cloudflare Dashboard, you should see:
-- `claw.ventureunknown.com` → `CNAME` → `<tunnel-id>.cfargotunnel.com` (Proxied)
+
+- `openclaw.yourdomain.com` → `CNAME` → `<tunnel-id>.cfargotunnel.com` (Proxied)
 
 ### Step 6: Test the Tunnel
 
@@ -132,7 +133,7 @@ cloudflared tunnel route dns openclaw claw.ventureunknown.com
 cloudflared tunnel run openclaw
 
 # In another terminal, verify it works
-curl -s https://claw.ventureunknown.com/_openclaw/ | head -5
+curl -s https://openclaw.yourdomain.com/_openclaw/ | head -5
 ```
 
 ### Step 7: Install as System Service
@@ -162,6 +163,7 @@ sudo ufw status
 ```
 
 Expected UFW rules after this change:
+
 ```
 Status: active
 
@@ -190,28 +192,28 @@ sudo docker volume rm caddy_data caddy_config
 
 After the tunnel is working, add authentication via Cloudflare Access:
 
-### In Cloudflare Dashboard:
+### In Cloudflare Dashboard
 
 1. Go to **Zero Trust** → **Access** → **Applications**
 2. Click **Add an application** → **Self-hosted**
 3. Configure:
    - **Application name:** OpenClaw
    - **Session duration:** 24 hours
-   - **Application domain:** `claw.ventureunknown.com`
+   - **Application domain:** `openclaw.yourdomain.com`
    - **Path:** `/_openclaw/*` (or leave blank to protect entire domain)
 
 4. Add a policy:
    - **Policy name:** Allowed Users
    - **Action:** Allow
    - **Include:**
-     - Emails: `your-email@example.com`
+     - Emails: `your-email@yourdomain.com`
      - Or: Login Methods → GitHub/Google
 
 5. Save the application
 
 ### Test Access Protection
 
-1. Open `https://claw.ventureunknown.com/_openclaw/` in an incognito window
+1. Open `https://openclaw.yourdomain.com/_openclaw/` in an incognito window
 2. You should see the Cloudflare Access login page
 3. Authenticate with your configured method
 4. You should now see the OpenClaw UI
@@ -235,7 +237,7 @@ cloudflared tunnel info openclaw
 
 ```bash
 # Check if CNAME is configured
-dig claw.ventureunknown.com
+dig openclaw.yourdomain.com
 
 # Should show CNAME to <tunnel-id>.cfargotunnel.com
 ```
@@ -305,9 +307,9 @@ After completing setup, verify:
 - [ ] Port 443 is closed (`sudo ufw status` shows no 443/tcp rule)
 - [ ] Port 80 is closed (was never opened)
 - [ ] Tunnel is running (`sudo systemctl status cloudflared`)
-- [ ] DNS routes through tunnel (`dig claw.ventureunknown.com` shows CNAME)
+- [ ] DNS routes through tunnel (`dig openclaw.yourdomain.com` shows CNAME)
 - [ ] Cloudflare Access is enabled (incognito browser shows login page)
-- [ ] Direct IP access fails (`curl -sk https://<VPS1_IP>/` times out or refused)
+- [ ] Direct IP access fails (`curl -sk https://15.204.xxx.xxx/` times out or refused)
 - [ ] Telegram bot still works (uses outbound long-polling)
 - [ ] Slack bot still works (uses outbound Socket Mode)
 
@@ -319,7 +321,7 @@ After completing setup, verify:
 |-----------|--------|
 | cloudflared installed | ✅ v2026.1.2 |
 | Tunnel created | ✅ ID: 7d64559d-5946-45f1-a0da-5818c7d9b348 |
-| DNS configured | ✅ claw.ventureunknown.com → tunnel |
+| DNS configured | ✅ openclaw.yourdomain.com → tunnel |
 | Systemd service | ✅ Enabled and running |
 | Port 443 closed | ✅ Removed from UFW |
 | Caddy removed | ✅ Container stopped and removed |
@@ -331,7 +333,7 @@ After completing setup, verify:
 |-----------|--------|
 | cloudflared installed | ✅ v2026.1.2 |
 | Tunnel created | ✅ ID: 4c7a52f5-d93c-4e5a-94ce-dc7f111ff4f5 |
-| DNS configured | ✅ observe.ventureunknown.com → tunnel |
+| DNS configured | ✅ observe.yourdomain.com → tunnel |
 | Systemd service | ✅ Enabled and running |
 | Port 443 closed | ✅ Removed from UFW |
 | Caddy removed | ✅ Container stopped and removed |
@@ -340,11 +342,13 @@ After completing setup, verify:
 ## Related Files
 
 ### VPS-1 (OpenClaw)
+
 - `/etc/cloudflared/config.yml` - Tunnel configuration
 - `/etc/cloudflared/credentials.json` - Tunnel credentials
 - `~/.cloudflared/cert.pem` - Cloudflare account certificate
 
 ### VPS-2 (Observe)
+
 - `/etc/cloudflared/config.yml` - Tunnel configuration
 - `/etc/cloudflared/credentials.json` - Tunnel credentials
 - `~/.cloudflared/cert.pem` - Cloudflare account certificate

@@ -2,9 +2,13 @@
 
 Secure OpenClaw and Grafana behind Cloudflare Tunnel with zero exposed ports.
 
+> **No SSL certificates required!** Cloudflare Tunnel handles TLS automatically.
+> You only need a Cloudflare account with your domain's DNS managed by Cloudflare.
+
 ## Overview
 
 This playbook configures:
+
 - cloudflared installation on both VPSs
 - Tunnels for OpenClaw (VPS-1) and Grafana (VPS-2)
 - DNS routing through Cloudflare
@@ -30,7 +34,8 @@ This playbook configures:
 ## Variables
 
 From `../openclaw-config.env`:
-- `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., claw.example.com)
+
+- `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., openclaw.example.com)
 - `DOMAIN_GRAFANA` - Domain for Grafana (e.g., observe.example.com)
 
 ## Architecture
@@ -39,7 +44,7 @@ From `../openclaw-config.env`:
 ┌─────────────────────────────────────────────────────────────┐
 │                         Internet                             │
 │                                                              │
-│    User ──► claw.example.com ──► Cloudflare Edge            │
+│    User ──► openclaw.example.com ──► Cloudflare Edge         │
 │                                        │                     │
 │                              Cloudflare Access               │
 │                                  (auth check)                │
@@ -134,6 +139,7 @@ cloudflared tunnel route dns openclaw <DOMAIN_OPENCLAW>
 ```
 
 **Important:** This creates a CNAME record pointing to the tunnel. In Cloudflare Dashboard, you should see:
+
 - `<DOMAIN_OPENCLAW>` → `CNAME` → `<tunnel-id>.cfargotunnel.com` (Proxied)
 
 ### Step 6: Test the Tunnel
@@ -274,7 +280,7 @@ sudo docker rm caddy 2>/dev/null || true
 
 Add authentication via Cloudflare Access for additional security.
 
-### In Cloudflare Dashboard:
+### In Cloudflare Dashboard
 
 1. Go to **Zero Trust** → **Access** → **Applications**
 2. Click **Add an application** → **Self-hosted**
@@ -441,11 +447,13 @@ After completing setup, verify:
 ## Related Files
 
 ### VPS-1 (OpenClaw)
+
 - `/etc/cloudflared/config.yml` - Tunnel configuration
 - `/etc/cloudflared/credentials.json` - Tunnel credentials
 - `~/.cloudflared/cert.pem` - Cloudflare account certificate
 
 ### VPS-2 (Observe)
+
 - `/etc/cloudflared/config.yml` - Tunnel configuration
 - `/etc/cloudflared/credentials.json` - Tunnel credentials
 - `~/.cloudflared/cert.pem` - Cloudflare account certificate

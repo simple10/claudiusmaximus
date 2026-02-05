@@ -85,12 +85,14 @@ Check for required values:
 If `NETWORKING_OPTION` is not set:
 
 > "NETWORKING_OPTION is not set. Which networking solution?"
+>
 > - **cloudflare-tunnel** (Recommended) - Zero exposed ports, origin IP hidden
 > - **caddy** - Port 443 exposed, uses Cloudflare Origin CA
 
 ### 4. Confirm Before Proceeding
 
 > "Ready to deploy with:
+>
 > - VPS-1: X.X.X.X (OpenClaw)
 > - VPS-2: Y.Y.Y.Y (Observability)
 > - Networking: Cloudflare Tunnel
@@ -124,6 +126,7 @@ If `NETWORKING_OPTION` is not set:
 ### Parallel Execution
 
 Steps that can run in parallel:
+
 - Steps 2-3: Base setup (both VPSs)
 - Steps 4-5: WireGuard (both VPSs)
 - Steps 6-7: Docker (both VPSs)
@@ -137,11 +140,16 @@ Steps that can run in parallel:
 ### Cloudflare Tunnel (Recommended)
 
 Use when:
+
 - Maximum security is priority
 - Origin IP must be hidden
 - No ports should be exposed
 
+**Prerequisites:** Cloudflare account, domain DNS managed by Cloudflare
+**Certificates needed:** None - tunnel handles TLS automatically
+
 Benefits:
+
 - Zero exposed ports (443 closed)
 - Origin IP hidden from attackers
 - Built-in DDoS protection
@@ -152,14 +160,18 @@ Execute: `playbooks/networking/cloudflare-tunnel.md`
 ### Caddy Reverse Proxy
 
 Use when:
+
 - Simpler setup preferred
 - No Cloudflare account available
 - Direct origin access needed
 
+**Prerequisites:** Cloudflare account, Origin CA certificate generated
+**Certificates needed:** Yes - must generate in Cloudflare Dashboard first
+
 Trade-offs:
+
 - Port 443 exposed
 - Origin IP discoverable
-- Manual SSL certificate management
 
 Execute: `playbooks/networking/caddy.md`
 
@@ -226,6 +238,7 @@ Two-user security model on both VPSs:
 | `openclaw` | None | None | Application runtime |
 
 Security benefits:
+
 - If `openclaw` is compromised, attacker cannot escalate to root
 - `adminclaw` is not a well-known username
 - Clear separation: admin tasks vs application runtime
@@ -267,6 +280,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 ## Security Checklist
 
 ### Both VPSs
+
 - [ ] SSH hardened (port 222, key-only, AllowUsers adminclaw)
 - [ ] UFW enabled with minimal rules
 - [ ] Fail2ban running
@@ -275,6 +289,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 - [ ] WireGuard tunnel active
 
 ### VPS-1 (OpenClaw)
+
 - [ ] Sysbox runtime installed
 - [ ] OpenClaw gateway running
 - [ ] Node Exporter accessible via WireGuard
@@ -282,18 +297,21 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 - [ ] Backup cron job configured
 
 ### VPS-2 (Observability)
+
 - [ ] All monitoring containers running
 - [ ] Prometheus scraping all targets
 - [ ] Loki receiving logs
 - [ ] Grafana accessible
 
 ### Networking (Cloudflare Tunnel)
+
 - [ ] Port 443 closed
 - [ ] Tunnel running on both VPSs
 - [ ] DNS routes through tunnel
 - [ ] Cloudflare Access configured
 
 ### Networking (Caddy)
+
 - [ ] Port 443 open
 - [ ] Origin CA certificates installed
 - [ ] Cloudflare SSL mode "Full (strict)"

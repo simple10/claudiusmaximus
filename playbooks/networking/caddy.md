@@ -2,9 +2,13 @@
 
 Configure Caddy as reverse proxy with Cloudflare Origin CA certificates.
 
+> **Origin CA certificate required!** You must generate a certificate in the Cloudflare Dashboard
+> BEFORE running this playbook. See [docs/CLOUDFLARE-SSL.md](../../docs/CLOUDFLARE-SSL.md) for instructions.
+
 ## Overview
 
 This playbook configures:
+
 - Cloudflare Origin CA certificates
 - Caddy reverse proxy on both VPSs
 - HTTPS-only access (port 80 blocked)
@@ -13,11 +17,13 @@ This playbook configures:
 ## When to Use This
 
 Use Caddy instead of Cloudflare Tunnel when:
+
 - You don't have a Cloudflare account
 - You need direct access to the origin server
 - You prefer simpler infrastructure
 
 **Trade-offs:**
+
 - Port 443 is exposed to the internet
 - Origin IP is discoverable
 - Direct IP access is possible (unless blocked by Cloudflare)
@@ -32,27 +38,15 @@ Use Caddy instead of Cloudflare Tunnel when:
 ## Variables
 
 From `../openclaw-config.env`:
-- `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., claw.example.com)
+
+- `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., openclaw.example.com)
 - `DOMAIN_GRAFANA` - Domain for Grafana (e.g., observe.example.com)
 
 ---
 
-## Generate Cloudflare Origin CA Certificate
-
-Before configuring Caddy, generate an Origin CA certificate in Cloudflare:
-
-1. Go to **Cloudflare Dashboard** → Your Domain → **SSL/TLS** → **Origin Server**
-2. Click **Create Certificate**
-3. Choose:
-   - **Private key type:** RSA (2048)
-   - **Hostnames:** `*.yourdomain.com, yourdomain.com`
-   - **Certificate validity:** 15 years (recommended)
-4. Click **Create**
-5. **IMPORTANT:** Copy both the certificate and private key - the private key is only shown once!
-
----
-
 ## VPS-1 Setup (OpenClaw)
+
+> **Prerequisite:** Complete [docs/CLOUDFLARE-SSL.md](../../docs/CLOUDFLARE-SSL.md) first to generate your Origin CA certificate.
 
 ### Step 1: Add Port 443 to UFW
 
@@ -159,6 +153,7 @@ docker run -d \
 ### Step 5: Configure Cloudflare DNS
 
 In Cloudflare Dashboard:
+
 1. Go to **DNS** → **Records**
 2. Add/Update: `<SUBDOMAIN>` → `A` → `<VPS1_IP>` (Proxied)
 3. Go to **SSL/TLS** → Set encryption mode to **Full (strict)**
@@ -276,6 +271,7 @@ docker run -d \
 ### Step 5: Configure Cloudflare DNS
 
 In Cloudflare Dashboard:
+
 1. Go to **DNS** → **Records**
 2. Add/Update: `<SUBDOMAIN>` → `A` → `<VPS2_IP>` (Proxied)
 3. Ensure SSL/TLS is set to **Full (strict)**

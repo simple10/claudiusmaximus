@@ -74,6 +74,7 @@ source ~/openclaw-config.env
 ### 2. Validate Required Settings
 
 Check for required values:
+
 - `VPS1_IP`, `VPS2_IP` - Required
 - `SSH_KEY_PATH`, `SSH_USER` - Required
 - `NETWORKING_OPTION` - Prompt if missing

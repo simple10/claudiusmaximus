@@ -77,10 +77,8 @@ This creates `~/.cloudflared/cert.pem` with your Cloudflare credentials.
 cloudflared tunnel create openclaw
 
 # Note the tunnel ID (UUID) from the output
-# Example: Created tunnel openclaw with id a1b2c3d4-e5f6-7890-abcd-ef1234567890
+# Example: Created tunnel openclaw with id a1b2c3d4-e5f6-xxx-xxx-xxxxxxxx
 ```
-
-**Actual tunnel ID (created 2026-02-05):** `7d64559d-5946-45f1-a0da-5818c7d9b348`
 
 ### Step 4: Configure the Tunnel
 
@@ -320,7 +318,7 @@ After completing setup, verify:
 | Component | Status |
 |-----------|--------|
 | cloudflared installed | ✅ v2026.1.2 |
-| Tunnel created | ✅ ID: 7d64559d-5946-45f1-a0da-5818c7d9b348 |
+| Tunnel created | ✅ ID: 7d64559d-5946-45f1-xxxx-xxxxxxxx |
 | DNS configured | ✅ openclaw.yourdomain.com → tunnel |
 | Systemd service | ✅ Enabled and running |
 | Port 443 closed | ✅ Removed from UFW |
@@ -332,7 +330,7 @@ After completing setup, verify:
 | Component | Status |
 |-----------|--------|
 | cloudflared installed | ✅ v2026.1.2 |
-| Tunnel created | ✅ ID: 4c7a52f5-d93c-4e5a-94ce-dc7f111ff4f5 |
+| Tunnel created | ✅ ID: 4c7a52f5-d93c-4e5a-xxx-xxxxxxxx |
 | DNS configured | ✅ observe.yourdomain.com → tunnel |
 | Systemd service | ✅ Enabled and running |
 | Port 443 closed | ✅ Removed from UFW |

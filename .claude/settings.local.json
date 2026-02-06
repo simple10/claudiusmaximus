@@ -14,11 +14,11 @@
       "mcp__chrome-devtools__take_screenshot",
       "Bash(tree:*)",
       "Bash(find:*)",
-      "WebSearch",
-      "WebFetch(domain:docs.ansible.com)",
       "Bash(wc:*)",
       "Bash(ls:*)",
-      "Bash(sudo chown:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npx tsx:*)",
+      "Bash(echo:*)"
     ]
   }
 }

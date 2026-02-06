@@ -19,6 +19,7 @@ This playbook provides a structured process for implementing features that have 
 ### 1. Read the Plan
 
 Read the plan file from `plans/<feature-name>.md`. Understand:
+
 - Target VPS(s)
 - Prerequisites
 - Implementation steps
@@ -70,6 +71,7 @@ Work through problems rather than stopping immediately. Notify the user if you'r
 Execute all verification steps from the plan. Record results in the tracking file.
 
 If verification fails:
+
 - Diagnose the issue
 - Fix and re-verify
 - Document what was wrong and how it was fixed
@@ -79,10 +81,12 @@ If verification fails:
 Once verified, create the permanent playbook:
 
 **Base features:** `playbooks/XX-feature-name.md`
+
 - Use next sequential number (check existing playbooks)
 - Follow existing playbook template structure
 
 **Optional features:** `playbooks/extras/feature-name.md`
+
 - No number prefix
 - Same template structure
 
@@ -145,6 +149,7 @@ What this playbook configures:
 # Cause: Why it happens
 # Solution: How to fix
 ```
+
 ```
 
 ### 6. Update Documentation
@@ -167,19 +172,23 @@ What this playbook configures:
 Present a summary to the user:
 
 ```
+
 ## Feature Complete: <feature-name>
 
 **Playbook created:** playbooks/XX-feature-name.md
 
 **What was configured:**
+
 - VPS-1: ...
 - VPS-2: ...
 
 **Verification:** All checks passed
 
 **Documentation updated:**
+
 - playbooks/README.md
 - CLAUDE.md
+
 ```
 
 ---

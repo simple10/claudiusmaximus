@@ -96,8 +96,14 @@ Create or update `.state/<IP>.md` with findings.
 ## State File Format
 
 ```markdown
-# VPS State: <IP> (<Role>)
-Last analyzed: YYYY-MM-DD
+---
+vps: <IP>
+role: <Role>
+ssh-user: <SSH_USER>
+ssh-port: <SSH_PORT>
+last-analyzed: YYYY-MM-DD HH:MM:SS
+state: ready | error
+---
 
 ## Base Playbooks
 

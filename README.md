@@ -74,6 +74,8 @@ DOMAIN_GRAFANA=observe.example.com
 **If using Caddy:** Follow [docs/CLOUDFLARE-SSL.md](docs/CLOUDFLARE-SSL.md) to generate Origin CA certificates first.
 
 **If using Cloudflare Tunnel:** No certificates needed - skip to Step 3.
+Claude will implement the tunnel and prompt for user confirmation.
+Post-deploy steps will be needed to configure Cloudflare Access (see below).
 
 ### Step 3: Deploy with Claude Code
 
@@ -124,6 +126,12 @@ You're now ready for Claude Code to automate the rest. Provide Claude Code with:
    - Configure Cloudflare Tunnel or Caddy
 
 ---
+
+## Post-Deployment: Configuration
+
+**If using Cloudflare Tunnel:** see [docs/CLOUDFLARE-TUNNEL.md](docs/CLOUDFLARE-TUNNEL.md) to finish setting up Cloudflare Access.
+
+Cloudflare Access is the gateway that authorizes users to access OpenClaw through the tunnel.
 
 ## Post-Deployment: Testing
 

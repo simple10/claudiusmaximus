@@ -150,6 +150,11 @@ OPENCLAW_WORKSPACE_DIR=/home/openclaw/.openclaw/workspace
 OPENCLAW_GATEWAY_PORT=0.0.0.0:18789
 OPENCLAW_BRIDGE_PORT=0.0.0.0:18790
 OPENCLAW_GATEWAY_BIND=lan
+
+# OTEL per-signal routing (each signal goes to its backend on VPS-2)
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.0.0.2:4318/v1/traces
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.0.0.2:9090/api/v1/otlp/v1/metrics
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.0.0.2:3100/otlp/v1/logs
 EOF
 
 sudo chmod 600 /home/openclaw/openclaw/.env
@@ -207,6 +212,10 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TZ=UTC
+      # OTEL per-signal routing (no shared endpoint - each signal goes to its backend)
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=${OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=${OTEL_EXPORTER_OTLP_LOGS_ENDPOINT}
     networks:
       - openclaw-gateway-net
     healthcheck:
@@ -322,9 +331,10 @@ EOF
 ```bash
 #!/bin/bash
 # IMPORTANT: OpenClaw rejects unknown config keys - only use documented keys
-# diagnostics-otel plugin exports traces to Tempo on VPS-2 via WireGuard
-# Metrics and logs disabled: Prometheus + Promtail already handle those
-sudo tee /home/openclaw/.openclaw/openclaw.json << 'EOF'
+# diagnostics-otel plugin exports all three signals to VPS-2 via WireGuard:
+#   traces → Tempo (4318), metrics → Prometheus (9090), logs → Loki (3100)
+# No endpoint field: per-signal routing via OTEL SDK env vars in docker-compose.override.yml
+sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
 {
   "gateway": {
     "bind": "lan",
@@ -340,18 +350,17 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'EOF'
     "enabled": true,
     "otel": {
       "enabled": true,
-      "endpoint": "http://10.0.0.2:4318",
       "protocol": "http/protobuf",
       "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": false,
-      "logs": false,
-      "sampleRate": 0.2,
-      "flushIntervalMs": 60000
+      "traces": ${OPENCLAW_OTEL_TRACES:-true},
+      "metrics": ${OPENCLAW_OTEL_METRICS:-true},
+      "logs": ${OPENCLAW_OTEL_LOGS:-true},
+      "sampleRate": ${OPENCLAW_OTEL_SAMPLERATE:-0.2},
+      "flushIntervalMs": ${OPENCLAW_OTEL_FLUSHINTERVAL:-20000}
     }
   }
 }
-EOF
+JSONEOF
 
 # Ensure container (uid 1000) can read/write
 sudo chown 1000:1000 /home/openclaw/.openclaw/openclaw.json
@@ -413,11 +422,13 @@ DOCKEREOF
 
 ---
 
-## 4.8b Patch diagnostics-otel for @opentelemetry/resources v2.x
+## 4.8b Patch diagnostics-otel for @opentelemetry v2.x API changes
 
-The upstream `diagnostics-otel` extension uses `new Resource()` which was replaced by
-`resourceFromAttributes()` in `@opentelemetry/resources` v2.x. Create a patched version
-and mount it via Docker volume.
+The upstream `diagnostics-otel` extension needs two patches for `@opentelemetry` v2.x:
+1. `@opentelemetry/resources` v2.x: `new Resource()` → `resourceFromAttributes()`
+2. `@opentelemetry/sdk-logs` v0.211+: `LoggerProvider.addLogRecordProcessor()` removed → pass `logRecordProcessors` in constructor
+
+Create a patched version and mount it via Docker volume.
 
 ```bash
 #!/bin/bash
@@ -426,8 +437,45 @@ sudo -u openclaw mkdir -p /home/openclaw/openclaw/patches-runtime
 
 # Copy the original and patch it
 sudo docker cp openclaw-gateway:/app/extensions/diagnostics-otel/src/service.ts /tmp/otel-service.ts
+
+# Patch 1: Resource -> resourceFromAttributes
 sed -i 's/import { Resource } from "@opentelemetry\/resources";/import { resourceFromAttributes } from "@opentelemetry\/resources";/' /tmp/otel-service.ts
 sed -i 's/const resource = new Resource(/const resource = resourceFromAttributes(/' /tmp/otel-service.ts
+
+# Patch 2: LoggerProvider constructor-based processors (addLogRecordProcessor removed in v0.211+)
+# Replace:
+#   logProvider = new LoggerProvider({ resource });
+#   logProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter, ...));
+# With:
+#   logProvider = new LoggerProvider({ resource, logRecordProcessors: [...] });
+python3 -c "
+import sys
+with open('/tmp/otel-service.ts', 'r') as f:
+    content = f.read()
+old = '''        logProvider = new LoggerProvider({ resource });
+        logProvider.addLogRecordProcessor(
+          new BatchLogRecordProcessor(
+            logExporter,
+            typeof otel.flushIntervalMs === \"number\"
+              ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
+              : {},
+          ),
+        );'''
+new = '''        logProvider = new LoggerProvider({
+          resource,
+          logRecordProcessors: [
+            new BatchLogRecordProcessor(
+              logExporter,
+              typeof otel.flushIntervalMs === \"number\"
+                ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
+                : {},
+            ),
+          ],
+        });'''
+content = content.replace(old, new)
+with open('/tmp/otel-service.ts', 'w') as f:
+    f.write(content)
+"
 
 sudo cp /tmp/otel-service.ts /home/openclaw/openclaw/patches-runtime/diagnostics-otel-service.ts
 sudo chown openclaw:openclaw /home/openclaw/openclaw/patches-runtime/diagnostics-otel-service.ts

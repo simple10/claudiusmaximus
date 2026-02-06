@@ -104,7 +104,8 @@ cd /home/openclaw/monitoring
 sudo -u openclaw docker compose ps
 
 # Test Prometheus targets (should show all targets as "up")
-curl -s http://localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | .scrapePool + ": " + .health'
+# Note: Prometheus bound to WireGuard IP (10.0.0.2)
+curl -s http://10.0.0.2:9090/api/v1/targets | jq -r '.data.activeTargets[] | .scrapePool + ": " + .health'
 
 # Test Loki readiness
 curl -s http://10.0.0.2:3100/ready
@@ -136,22 +137,30 @@ curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | selec
 
 ---
 
-## 7.4a Verify Tracing (VPS-2)
+## 7.4a Verify OTEL Signals (VPS-2)
+
+All three OTEL signals route from VPS-1 to their respective backends on VPS-2:
+- **Traces** → Tempo (10.0.0.2:4318)
+- **Metrics** → Prometheus OTLP receiver (10.0.0.2:9090)
+- **Logs** → Loki OTLP endpoint (10.0.0.2:3100)
 
 ```bash
-# Check Tempo is running
-sudo docker ps | grep tempo
+# Check Tempo (traces)
 curl -s http://localhost:3200/ready
-
-# Check OTLP endpoint listening on WireGuard
 ss -tlnp | grep 4318
 
-# From VPS-1: Test OTLP connectivity
+# Check Prometheus OTLP receiver (metrics)
+# Prometheus now on WireGuard IP with OTLP enabled
+curl -s http://10.0.0.2:9090/api/v1/status/config | grep -o 'enable_otlp_receiver'
+
+# From VPS-1: Test all OTLP endpoints are reachable
 curl -s http://10.0.0.2:4318/v1/traces -X POST -H "Content-Type: application/json" -d '{}'
-# Returns 400 (bad request) not connection refused = endpoint is reachable
+curl -s http://10.0.0.2:9090/api/v1/otlp/v1/metrics -X POST -H "Content-Type: application/json" -d '{}'
+curl -s http://10.0.0.2:3100/otlp/v1/logs -X POST -H "Content-Type: application/json" -d '{}'
+# Returns 400/415 (not connection refused) = endpoints reachable
 ```
 
-**Expected:** Tempo container running, `/ready` returns "ready", OTLP listening on `10.0.0.2:4318`.
+**Expected:** All three OTLP endpoints reachable. Tempo ready, Prometheus OTLP enabled, Loki accepting OTLP logs.
 
 ---
 
@@ -254,7 +263,7 @@ cat /etc/cron.d/openclaw-backup
 
 ```bash
 sudo -u openclaw docker compose ps
-curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].health' | sort | uniq -c
+curl -s http://10.0.0.2:9090/api/v1/targets | jq '.data.activeTargets[].health' | sort | uniq -c
 curl -s http://10.0.0.2:3100/ready
 curl -s http://localhost:3200/ready
 ss -tlnp | grep 4318
@@ -332,4 +341,6 @@ Deployment is complete when:
 6. ✅ Grafana accessible with working datasources
 7. ✅ External access working via configured networking option
 8. ✅ Backup cron job configured on VPS-1
-9. ✅ Traces appearing in Tempo from VPS-1
+9. ✅ OTEL traces appearing in Tempo from VPS-1
+10. ✅ OTEL metrics appearing in Prometheus from VPS-1
+11. ✅ OTEL logs appearing in Loki from VPS-1

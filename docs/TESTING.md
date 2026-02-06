@@ -248,7 +248,7 @@ ssh -p 222 adminclaw@<VPS2_IP> "sudo ss -tlnp | grep -E '(9090|3000|3100|3200|43
 
 **Success criteria** - Services should bind to these addresses:
 
-- `127.0.0.1:9090` - Prometheus (localhost only)
+- `10.0.0.2:9090` - Prometheus (WireGuard only, receives OTLP metrics)
 - `127.0.0.1:3000` - Grafana (localhost only)
 - `10.0.0.2:3100` - Loki (WireGuard only)
 - `127.0.0.1:3200` - Tempo HTTP API (localhost only)
@@ -257,7 +257,7 @@ ssh -p 222 adminclaw@<VPS2_IP> "sudo ss -tlnp | grep -E '(9090|3000|3100|3200|43
 - `127.0.0.1:9100` - Node Exporter (localhost only)
 - `127.0.0.1:8080` - cAdvisor (localhost only)
 
-**Security note**: Only Loki and Tempo OTLP are accessible via WireGuard (Loki receives logs from VPS-1 Promtail, Tempo receives traces from VPS-1 OpenClaw). All other services are bound to localhost, providing defense-in-depth even if UFW is misconfigured.
+**Security note**: Prometheus, Loki, and Tempo OTLP are accessible via WireGuard (Prometheus receives OTLP metrics, Loki receives logs from Promtail and OTLP, Tempo receives traces). All other services are bound to localhost, providing defense-in-depth even if UFW is misconfigured.
 
 ---
 
@@ -266,8 +266,8 @@ ssh -p 222 adminclaw@<VPS2_IP> "sudo ss -tlnp | grep -E '(9090|3000|3100|3200|43
 #### 5.1 Prometheus Targets
 
 ```bash
-# Note: Prometheus is bound to 127.0.0.1 for security
-ssh -p 222 adminclaw@<VPS2_IP> "curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'"
+# Note: Prometheus is bound to WireGuard IP (10.0.0.2) - receives OTLP metrics from VPS-1
+ssh -p 222 adminclaw@<VPS2_IP> "curl -s http://10.0.0.2:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'"
 ```
 
 **Success criteria**: These targets should show `"health": "up"`:
@@ -373,7 +373,7 @@ For a rapid health check, run this single command (note: SSH uses port 222):
 echo "=== VPS-1 Health ===" && \
 ssh -p 222 adminclaw@<VPS1_IP> "sudo docker ps --format '{{.Names}}: {{.Status}}' && echo && sudo wg show wg0 | head -3" && \
 echo && echo "=== VPS-2 Health ===" && \
-ssh -p 222 adminclaw@<VPS2_IP> "sudo docker ps --format '{{.Names}}: {{.Status}}' && curl -s http://127.0.0.1:9090/api/v1/targets | jq -r '.data.activeTargets[] | \"\(.labels.job): \(.health)\"'"
+ssh -p 222 adminclaw@<VPS2_IP> "sudo docker ps --format '{{.Names}}: {{.Status}}' && curl -s http://10.0.0.2:9090/api/v1/targets | jq -r '.data.activeTargets[] | \"\(.labels.job): \(.health)\"'"
 ```
 
 ---

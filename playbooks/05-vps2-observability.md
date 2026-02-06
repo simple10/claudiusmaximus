@@ -47,8 +47,8 @@ EOF
 ```bash
 #!/bin/bash
 # SECURITY: All services use host network but bind to localhost where possible
-# Only Loki needs WireGuard access (receives logs from VPS-1 Promtail)
-# Prometheus makes OUTBOUND connections to WireGuard, doesn't need to listen on it
+# Loki, Tempo, and Prometheus need WireGuard access (receive OTLP data from VPS-1)
+# Prometheus receives OTLP metrics from VPS-1 and scrapes VPS-1 via WireGuard
 sudo -u openclaw tee /home/openclaw/monitoring/docker-compose.yml << 'EOF'
 services:
   prometheus:
@@ -64,8 +64,11 @@ services:
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
-      # SECURITY: Bind to localhost only - accessed by Grafana, not externally
-      - "--web.listen-address=127.0.0.1:9090"
+      # SECURITY: Bind to WireGuard IP - receives OTLP metrics from VPS-1
+      # Same pattern as Loki (WireGuard only, not public)
+      - "--web.listen-address=10.0.0.2:9090"
+      # Enable OTLP receiver for OpenClaw app metrics
+      - "--web.enable-otlp-receiver"
     network_mode: host
 
   grafana:
@@ -189,7 +192,7 @@ rule_files:
 scrape_configs:
   - job_name: "prometheus"
     static_configs:
-      - targets: ["127.0.0.1:9090"]
+      - targets: ["10.0.0.2:9090"]
 
   # Local VPS-2 metrics (bound to 127.0.0.1 for security)
   - job_name: "node-exporter-local"
@@ -334,6 +337,8 @@ ruler:
 
 limits_config:
   retention_period: 720h
+  # Required for OTLP log ingestion (structured metadata from OTEL attributes)
+  allow_structured_metadata: true
 EOF
 ```
 
@@ -383,7 +388,7 @@ EOF
 
 ```bash
 #!/bin/bash
-# Prometheus: localhost (bound to 127.0.0.1)
+# Prometheus: WireGuard IP (bound to 10.0.0.2 - receives OTLP metrics from VPS-1)
 # Loki: WireGuard IP (bound to 10.0.0.2 for security - same host, still accessible)
 sudo -u openclaw tee /home/openclaw/monitoring/grafana/provisioning/datasources/datasources.yml << 'EOF'
 apiVersion: 1
@@ -392,7 +397,9 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://127.0.0.1:9090
+    # Prometheus binds to WireGuard IP (receives OTLP metrics from VPS-1)
+    # Grafana on same host can still reach it via this IP
+    url: http://10.0.0.2:9090
     isDefault: true
     editable: false
 
@@ -462,7 +469,8 @@ cd /home/openclaw/monitoring
 sudo -u openclaw docker compose ps
 
 # Test Prometheus targets (should show all targets as "up")
-curl -s http://localhost:9090/api/v1/targets | jq -r '.data.activeTargets[] | .scrapePool + ": " + .health'
+# Note: Prometheus now bound to WireGuard IP (10.0.0.2)
+curl -s http://10.0.0.2:9090/api/v1/targets | jq -r '.data.activeTargets[] | .scrapePool + ": " + .health'
 
 # Test Loki (via WireGuard IP)
 curl -s http://10.0.0.2:3100/ready
@@ -533,8 +541,9 @@ curl http://10.0.0.2:3100/ready
 
 ## Security Notes
 
-- All services bind to localhost except Loki and Tempo (need WireGuard access)
-- Loki only accepts connections on WireGuard interface (10.0.0.2:3100)
+- Most services bind to localhost; Loki, Tempo, and Prometheus bind to WireGuard IP (10.0.0.2)
+- Prometheus on WireGuard (10.0.0.2:9090) - receives OTLP metrics from VPS-1 and scrapes VPS-1
+- Loki on WireGuard (10.0.0.2:3100) - receives logs from VPS-1 Promtail and OTLP logs from OpenClaw
 - Tempo HTTP API on localhost (127.0.0.1:3200), OTLP receiver on WireGuard (10.0.0.2:4318)
 - UFW must allow traffic from WireGuard subnet: `sudo ufw allow from 10.0.0.0/24`
 - Grafana authentication required (auto-generated password)

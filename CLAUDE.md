@@ -412,7 +412,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 10. **Grafana subpath**: Use `handle` not `handle_path` in Caddy
 11. **Backup permissions**: Run as root via `/etc/cron.d/`
 12. **Tempo OTLP:** Binds to WireGuard IP (10.0.0.2:4318) for trace ingestion
-13. **OpenClaw OTEL:** Keep metrics/logs disabled; use existing Prometheus/Promtail
+13. **OpenClaw OTEL:** All signals enabled — traces→Tempo, metrics→Prometheus, logs→Loki
 
 ---
 

@@ -346,6 +346,67 @@ EOF
 # sudo docker exec openclaw-gateway node dist/index.js gateway --help 2>&1 | grep -i restart
 # If OpenClaw rejects the key, remove the "commands" block below.
 
+# trustedProxies:
+#   Cloudflare Tunnel: cloudflared connects via Docker bridge → use "172.30.0.1"
+#   Caddy (host network): Caddy connects from localhost → no trustedProxies needed
+#   NOTE: Only exact IPs work — CIDR ranges are NOT supported by isTrustedProxyAddress().
+#
+# dangerouslyDisableDeviceAuth (Cloudflare Tunnel ONLY):
+#   Disables device pairing for the control UI. The gateway's auto-approve only works
+#   for localhost connections (loopback IP + localhost Host header). Through the tunnel,
+#   requests arrive with a public Host header, so pairing always fails.
+#   Cloudflare Access provides authentication at the edge, making device pairing redundant.
+#
+#   DO NOT set this for Caddy deployments — device pairing is an important security layer
+#   when the origin port is exposed. For Caddy, bootstrap the first device via SSH tunnel:
+#     ssh -L 18789:localhost:18789 -p 222 adminclaw@<VPS1_IP>
+#     # Then open http://localhost:18789/chat?token=<TOKEN> — pairing auto-approves
+#     # After pairing, the device works through Caddy with the public URL
+
+# Choose config based on networking option:
+# - Cloudflare Tunnel: trustedProxies + dangerouslyDisableDeviceAuth
+# - Caddy: no trustedProxies, no dangerouslyDisableDeviceAuth
+
+if [ "${NETWORKING_OPTION}" = "cloudflare-tunnel" ]; then
+sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
+{
+  "commands": {
+    "restart": true
+  },
+  "gateway": {
+    "bind": "lan",
+    "mode": "local",
+    "trustedProxies": ["172.30.0.1"],
+    "controlUi": {
+      "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}",
+      "dangerouslyDisableDeviceAuth": true
+    }
+  },
+  "plugins": {
+    "allow": ["diagnostics-otel"],
+    "entries": {
+      "diagnostics-otel": { "enabled": true }
+    }
+  },
+  "diagnostics": {
+    "enabled": true,
+    "otel": {
+      "enabled": true,
+      "protocol": "http/protobuf",
+      "serviceName": "openclaw-gateway",
+      "traces": ${OPENCLAW_OTEL_TRACES:-true},
+      "metrics": ${OPENCLAW_OTEL_METRICS:-true},
+      "logs": ${OPENCLAW_OTEL_LOGS:-true},
+      "sampleRate": ${OPENCLAW_OTEL_SAMPLERATE:-0.2},
+      "flushIntervalMs": ${OPENCLAW_OTEL_FLUSHINTERVAL:-20000}
+    }
+  }
+}
+JSONEOF
+else
+# Caddy: no trustedProxies (Caddy on host network connects from localhost),
+# no dangerouslyDisableDeviceAuth (device pairing is a security layer).
+# Bootstrap first device via SSH tunnel (see comment above).
 sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
 {
   "commands": {
@@ -379,6 +440,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
   }
 }
 JSONEOF
+fi
 
 # Ensure container (uid 1000) can read/write, and not world-readable
 sudo chown 1000:1000 /home/openclaw/.openclaw/openclaw.json

@@ -1,8 +1,16 @@
 # OpenClaw on VPS
 
-This repository contains everything needed to securely deploy OpenClaw across two VPS instances with full observability.
+This repository contains everything needed to securely deploy OpenClaw on two VPS instances with full observability.
 
 The quick start guides recommend OVHCloud but any host provider that supports Ubuntu 24.04 or later should work.
+
+This project is an experiment for using `claude code` for devops. A significant effort was made to ensure OpenClaw
+is running as securely as possible. However, there's no guarantee claude will always follow the playbooks as designed.
+
+It's strongly recommended to use the Cloudflare Tunnel networking option in openclaw-config.env.
+Caddy support (no Cloudflare Tunnel) is provided as an example. You will need to work with claude
+to make sure it's secure and requires device pairing. Device pairing is disabled with Cloudflare Tunnel
+since Cloudflare is already securing access.
 
 ## Requirements
 

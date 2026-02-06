@@ -422,8 +422,8 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 15. **Entrypoint script:** Gateway uses bind-mounted entrypoint that cleans lock files and bootstraps sandbox images before starting
 16. **Self-restart:** `commands.restart: true` enables agents to modify config and trigger in-process restart via SIGUSR1
 17. **UI subpaths:** Configure `SUBPATH_OPENCLAW` and `SUBPATH_GRAFANA` in openclaw-config.env; gateway uses `controlUi.basePath`, Grafana uses `GF_SERVER_SERVE_FROM_SUB_PATH`; Caddy must use `handle` (not `handle_path`) to preserve the prefix
-18. **Trusted proxies (Tunnel only):** `gateway.trustedProxies: ["172.30.0.1"]` — cloudflared connects via Docker bridge; without this, gateway rejects forwarded headers. Only exact IPs work (no CIDR). Not needed for Caddy (host network, connects from localhost).
-19. **Device auth bypass (Tunnel only):** `gateway.controlUi.dangerouslyDisableDeviceAuth: true` — required for Cloudflare Tunnel; auto-approve only works for localhost connections. DO NOT set for Caddy — device pairing is a security layer when the origin port is exposed. For Caddy, bootstrap first device via SSH tunnel: `ssh -L 18789:localhost:18789 -p 222 adminclaw@VPS1`.
+18. **Trusted proxies:** `gateway.trustedProxies: ["172.30.0.1"]` for Cloudflare Tunnel (cloudflared connects via Docker bridge). Not needed for Caddy (host network). Only exact IPs work (no CIDR).
+19. **Device pairing:** New devices get "pairing required" on first connect. Approve via CLI: `sudo docker exec openclaw-gateway node dist/index.js devices approve <requestId>`. Once one device is paired, approve others from the Control UI.
 
 ---
 

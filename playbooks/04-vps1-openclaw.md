@@ -346,26 +346,28 @@ EOF
 # sudo docker exec openclaw-gateway node dist/index.js gateway --help 2>&1 | grep -i restart
 # If OpenClaw rejects the key, remove the "commands" block below.
 
-# trustedProxies:
-#   Cloudflare Tunnel: cloudflared connects via Docker bridge → use "172.30.0.1"
-#   Caddy (host network): Caddy connects from localhost → no trustedProxies needed
-#   NOTE: Only exact IPs work — CIDR ranges are NOT supported by isTrustedProxyAddress().
+# trustedProxies (Cloudflare Tunnel only):
+#   cloudflared connects via Docker bridge (172.30.0.1). Without this, gateway
+#   rejects X-Forwarded-* headers from the tunnel.
+#   Not needed for Caddy (host network, connects from localhost).
+#   NOTE: Only exact IPs work — CIDR ranges are NOT supported.
 #
-# dangerouslyDisableDeviceAuth (Cloudflare Tunnel ONLY):
-#   Disables device pairing for the control UI. The gateway's auto-approve only works
-#   for localhost connections (loopback IP + localhost Host header). Through the tunnel,
-#   requests arrive with a public Host header, so pairing always fails.
-#   Cloudflare Access provides authentication at the edge, making device pairing redundant.
+# Device pairing:
+#   New devices must be approved before they can connect. The gateway's auto-approve
+#   only works for localhost connections, so tunnel/Caddy users need CLI approval:
 #
-#   DO NOT set this for Caddy deployments — device pairing is an important security layer
-#   when the origin port is exposed. For Caddy, bootstrap the first device via SSH tunnel:
-#     ssh -L 18789:localhost:18789 -p 222 adminclaw@<VPS1_IP>
-#     # Then open http://localhost:18789/chat?token=<TOKEN> — pairing auto-approves
-#     # After pairing, the device works through Caddy with the public URL
+#   1. User opens https://<DOMAIN>/chat?token=<TOKEN> → gets "pairing required"
+#   2. Admin approves via SSH:
+#        sudo docker exec openclaw-gateway node dist/index.js devices list
+#        sudo docker exec openclaw-gateway node dist/index.js devices approve <requestId>
+#   3. User's browser auto-retries → connected
+#
+#   Once one device is paired, subsequent devices can be approved from the Control UI.
+#   Pending requests expire after 5 minutes — the browser retries and creates new ones.
 
 # Choose config based on networking option:
-# - Cloudflare Tunnel: trustedProxies + dangerouslyDisableDeviceAuth
-# - Caddy: no trustedProxies, no dangerouslyDisableDeviceAuth
+# - Cloudflare Tunnel: trustedProxies needed
+# - Caddy: no trustedProxies needed
 
 if [ "${NETWORKING_OPTION}" = "cloudflare-tunnel" ]; then
 sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
@@ -378,8 +380,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
     "mode": "local",
     "trustedProxies": ["172.30.0.1"],
     "controlUi": {
-      "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}",
-      "dangerouslyDisableDeviceAuth": true
+      "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}"
     }
   },
   "plugins": {
@@ -404,9 +405,8 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
 }
 JSONEOF
 else
-# Caddy: no trustedProxies (Caddy on host network connects from localhost),
-# no dangerouslyDisableDeviceAuth (device pairing is a security layer).
-# Bootstrap first device via SSH tunnel (see comment above).
+# Caddy: no trustedProxies needed (Caddy on host network connects from localhost).
+# Device pairing: approve via CLI (see comment above).
 sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
 {
   "commands": {

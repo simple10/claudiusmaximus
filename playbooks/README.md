@@ -2,6 +2,13 @@
 
 Deployment playbooks for Claude to execute. See `CLAUDE.md` for orchestration.
 
+## User & Sudo
+
+`adminclaw` user has passwordless sudo access.
+Most setup commands will need to be executed via sudo.
+
+`openclaw` user does not have passwordless sudo.
+
 ## Analysis Mode
 
 For existing deployments, run `00-analysis-mode.md` first to verify current state before making changes.

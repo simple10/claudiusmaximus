@@ -407,7 +407,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 5. **File ownership**: Container runs as uid 1000, `.openclaw` must be owned by uid 1000
 6. **OpenClaw config**: Keep `openclaw.json` minimal - rejects unknown keys
 7. **Gateway startup**: Use `--allow-unconfigured` flag for initial startup
-8. **UFW on VPS-1**: Allow ports 9100 and 18789 from WireGuard (10.0.0.0/24)
+8. **UFW on VPS-1**: Allow port 9100 (metrics) and 18789 (gateway debug) from WireGuard (10.0.0.0/24)
 9. **Loki schema**: Use v13 with tsdb store
 10. **Grafana subpath**: Use `handle` not `handle_path` in Caddy
 11. **Backup permissions**: Run as root via `/etc/cron.d/`

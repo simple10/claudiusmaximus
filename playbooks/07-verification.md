@@ -85,9 +85,6 @@ curl -s http://localhost:18789/ | head -5
 # Test health endpoint
 curl -s http://localhost:18789/health
 
-# Verify metrics endpoint (for Prometheus)
-curl -s http://localhost:18789/metrics | head -10
-
 # Check Node Exporter
 curl -s http://localhost:9100/metrics | head -5
 
@@ -95,7 +92,7 @@ curl -s http://localhost:9100/metrics | head -5
 sudo docker logs --tail 10 promtail
 ```
 
-**Expected:** All containers running, health endpoint returns OK, metrics available.
+**Expected:** All containers running, health endpoint returns OK.
 
 ---
 
@@ -130,9 +127,6 @@ From VPS-2, verify it can scrape VPS-1 metrics:
 ```bash
 # Test Node Exporter on VPS-1
 curl -s http://10.0.0.1:9100/metrics | head -5
-
-# Test OpenClaw metrics on VPS-1
-curl -s http://10.0.0.1:18789/metrics | head -5
 
 # Check Prometheus is scraping successfully
 curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.scrapePool | contains("openclaw")) | {job: .scrapePool, health: .health}'

@@ -274,8 +274,6 @@ ssh -p 222 adminclaw@<VPS2_IP> "curl -s http://127.0.0.1:9090/api/v1/targets | j
 - cadvisor-local
 - node-exporter-openclaw
 
-**Note**: `openclaw-gateway` may show as "down" - this is expected if the OpenClaw gateway doesn't expose a `/metrics` endpoint.
-
 #### 5.2 Loki Health
 
 ```bash

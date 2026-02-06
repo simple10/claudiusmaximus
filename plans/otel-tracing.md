@@ -25,7 +25,7 @@ Add Grafana Tempo for distributed tracing to complete the observability stack (m
 | Tempo location | VPS-2 | Matches existing observability stack location |
 | OTEL Collector | Skip | OpenClaw exports directly via `diagnostics-otel` plugin |
 | Tempo binding | 10.0.0.2:4318 | WireGuard IP only - matches Loki security pattern |
-| OTEL metrics | Disabled | Prometheus already scrapes `/metrics` |
+| OTEL metrics | Disabled | Gateway has no /metrics endpoint; enable when app metrics dashboards are needed |
 | OTEL logs | Disabled | Promtail already ships to Loki |
 
 ## Traffic Flow

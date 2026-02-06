@@ -197,13 +197,6 @@ scrape_configs:
         labels:
           host: "openclaw"
 
-  - job_name: "openclaw-gateway"
-    static_configs:
-      - targets: ["10.0.0.1:18789"]
-        labels:
-          host: "openclaw"
-    metrics_path: /metrics
-    scrape_timeout: 10s
 EOF
 ```
 
@@ -218,14 +211,14 @@ sudo -u openclaw tee /home/openclaw/monitoring/alerts.yml << 'EOF'
 groups:
   - name: openclaw
     rules:
-      - alert: OpenClawGatewayDown
-        expr: up{job="openclaw-gateway"} == 0
-        for: 1m
+      - alert: OpenClawHostDown
+        expr: up{job="node-exporter-openclaw"} == 0
+        for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "OpenClaw Gateway is down"
-          description: "The OpenClaw gateway has been unreachable for more than 1 minute."
+          summary: "OpenClaw host (VPS-1) is unreachable"
+          description: "Cannot scrape Node Exporter on VPS-1 for more than 2 minutes."
 
       - alert: HighMemoryUsage
         expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.9

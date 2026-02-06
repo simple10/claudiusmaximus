@@ -143,7 +143,7 @@ sudo ufw allow 222/tcp
 # WireGuard
 sudo ufw allow 51820/udp
 
-# IMPORTANT: Allow metrics ports from WireGuard network for Prometheus scraping
+# Allow Node Exporter metrics and gateway debugging from WireGuard
 sudo ufw allow from 10.0.0.0/24 to any port 9100
 sudo ufw allow from 10.0.0.0/24 to any port 18789
 

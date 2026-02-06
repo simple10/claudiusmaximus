@@ -145,8 +145,8 @@ GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
 # Docker compose variables (required by repo's docker-compose.yml)
 OPENCLAW_CONFIG_DIR=/home/openclaw/.openclaw
 OPENCLAW_WORKSPACE_DIR=/home/openclaw/.openclaw/workspace
-# IMPORTANT: Bind to 0.0.0.0 to allow Prometheus scraping via WireGuard (10.0.0.x)
-# Using 127.0.0.1 would block metrics collection from VPS-2
+# Bind to 0.0.0.0 so cloudflared can reach the gateway on localhost
+# Also allows direct access via WireGuard for debugging
 OPENCLAW_GATEWAY_PORT=0.0.0.0:18789
 OPENCLAW_BRIDGE_PORT=0.0.0.0:18790
 OPENCLAW_GATEWAY_BIND=lan
@@ -370,9 +370,6 @@ curl -s http://localhost:18789/ | head -5
 
 # Test health endpoint
 curl -s http://localhost:18789/health
-
-# Verify metrics are exposed (for Prometheus)
-curl -s http://localhost:18789/metrics | head -10
 
 # Check Node Exporter
 curl -s http://localhost:9100/metrics | head -5

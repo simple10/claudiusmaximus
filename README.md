@@ -27,14 +27,14 @@ The quick start guides recommend OVHCloud but any host provider that supports Ub
                             │
             ┌───────────────┼───────────────┐
             ▼                               ▼
-  ┌──────────────────┐            ┌──────────────────┐
+  ┌──────────────────┐            ┌─────────────-─────┐
   │  VPS-1: OpenClaw │            │ VPS-2: Monitoring │
   │                  │  WireGuard │                   │
   │  Gateway         │───────────>│  Grafana          │
   │  Promtail        │  telemetry │  Prometheus       │
   │  Node Exporter   │            │  Loki             │
   │                  │            │  Tempo            │
-  └──────────────────┘            └──────────────────┘
+  └──────────────────┘            └─────────────-─────┘
 ```
 
 | VPS | Role | Services |

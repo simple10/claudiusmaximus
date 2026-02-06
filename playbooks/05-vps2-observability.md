@@ -8,6 +8,7 @@ This playbook configures:
 - Prometheus for metrics collection
 - Grafana for dashboards
 - Loki for log aggregation
+- Tempo for distributed tracing
 - Alertmanager for alerts
 - Node Exporter and cAdvisor for host metrics
 
@@ -142,12 +143,25 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
     network_mode: host
 
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    restart: unless-stopped
+    volumes:
+      - ./tempo-config.yml:/etc/tempo/config.yaml:ro
+      - tempo_data:/var/tempo
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    # NOTE: Tempo needs WireGuard access - OpenClaw on VPS-1 pushes traces to 10.0.0.2:4318
+    # Binding configured in tempo-config.yml
+    network_mode: host
+
 # No custom networks needed - all services use host network with localhost binding
 volumes:
   prometheus_data:
   grafana_data:
   loki_data:
   alertmanager_data:
+  tempo_data:
 EOF
 ```
 
@@ -325,6 +339,46 @@ EOF
 
 ---
 
+## 5.6a Create Tempo Configuration
+
+```bash
+#!/bin/bash
+# SECURITY: Tempo HTTP API on localhost, OTLP receiver on WireGuard (10.0.0.2:4318)
+# OpenClaw on VPS-1 pushes traces via OTLP/HTTP over WireGuard
+sudo -u openclaw tee /home/openclaw/monitoring/tempo-config.yml << 'EOF'
+stream_over_http_enabled: true
+
+server:
+  http_listen_address: 127.0.0.1
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: "10.0.0.2:4318"
+
+ingester:
+  max_block_duration: 5m
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+EOF
+```
+
+---
+
 ## 5.7 Create Grafana Datasource Provisioning
 
 ```bash
@@ -348,7 +402,24 @@ datasources:
     # Loki binds to WireGuard IP for security (only accepts connections from VPS-1 Promtail)
     # Grafana on same host can still reach it via this IP
     url: http://10.0.0.2:3100
+    uid: loki
     editable: false
+
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://127.0.0.1:3200
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        tags: ['host', 'job']
+        filterByTraceID: true
+        filterBySpanID: true
+      nodeGraph:
+        enabled: true
 EOF
 ```
 
@@ -462,8 +533,10 @@ curl http://10.0.0.2:3100/ready
 
 ## Security Notes
 
-- All services bind to localhost except Loki (needs WireGuard access)
-- Loki only accepts connections on WireGuard interface (10.0.0.2)
+- All services bind to localhost except Loki and Tempo (need WireGuard access)
+- Loki only accepts connections on WireGuard interface (10.0.0.2:3100)
+- Tempo HTTP API on localhost (127.0.0.1:3200), OTLP receiver on WireGuard (10.0.0.2:4318)
+- UFW must allow traffic from WireGuard subnet: `sudo ufw allow from 10.0.0.0/24`
 - Grafana authentication required (auto-generated password)
 - Host network mode used for reliable inter-service communication
 - No ports exposed to public internet from this stack

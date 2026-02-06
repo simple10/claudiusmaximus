@@ -174,10 +174,10 @@ The OpenClaw repo includes a docker-compose.yml. Create an override file to add 
 sudo -u openclaw tee /home/openclaw/openclaw/docker-compose.override.yml << 'EOF'
 services:
   openclaw-gateway:
-    # Build configuration - required for docker compose build
+    # Build configuration - uses custom Dockerfile for OTEL extension support
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.custom
     image: openclaw:local
     container_name: openclaw-gateway
     runtime: sysbox-runc
@@ -237,7 +237,7 @@ services:
     # Build configuration for CLI
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.custom
     image: openclaw:local
     runtime: sysbox-runc
     networks:
@@ -321,18 +321,124 @@ EOF
 
 ```bash
 #!/bin/bash
-# IMPORTANT: Keep this minimal - OpenClaw rejects unknown config keys
+# IMPORTANT: OpenClaw rejects unknown config keys - only use documented keys
+# diagnostics-otel plugin exports traces to Tempo on VPS-2 via WireGuard
+# Metrics and logs disabled: Prometheus + Promtail already handle those
 sudo tee /home/openclaw/.openclaw/openclaw.json << 'EOF'
 {
   "gateway": {
     "bind": "lan",
     "mode": "local"
+  },
+  "plugins": {
+    "allow": ["diagnostics-otel"],
+    "entries": {
+      "diagnostics-otel": { "enabled": true }
+    }
+  },
+  "diagnostics": {
+    "enabled": true,
+    "otel": {
+      "enabled": true,
+      "endpoint": "http://10.0.0.2:4318",
+      "protocol": "http/protobuf",
+      "serviceName": "openclaw-gateway",
+      "traces": true,
+      "metrics": false,
+      "logs": false,
+      "sampleRate": 0.2,
+      "flushIntervalMs": 60000
+    }
   }
 }
 EOF
 
 # Ensure container (uid 1000) can read/write
 sudo chown 1000:1000 /home/openclaw/.openclaw/openclaw.json
+```
+
+---
+
+## 4.8a Create Custom Dockerfile for OTEL Support
+
+The upstream Dockerfile doesn't install extension dependencies (e.g., `@opentelemetry/api`) because
+extension `package.json` files aren't copied before `pnpm install --frozen-lockfile`. This custom
+Dockerfile adds the `diagnostics-otel` extension's `package.json` to the install step.
+
+```bash
+#!/bin/bash
+# Create custom Dockerfile that includes OTEL extension dependencies
+sudo -u openclaw tee /home/openclaw/openclaw/Dockerfile.custom << 'DOCKEREOF'
+FROM node:22-bookworm
+
+# Install Bun (required for build scripts)
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+RUN corepack enable
+
+WORKDIR /app
+
+ARG OPENCLAW_DOCKER_APT_PACKAGES=""
+RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
+      apt-get update && \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES && \
+      apt-get clean && \
+      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
+    fi
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+COPY ui/package.json ./ui/package.json
+# Copy extension package.json files so pnpm can resolve workspace dependencies
+COPY extensions/diagnostics-otel/package.json ./extensions/diagnostics-otel/package.json
+COPY patches ./patches
+COPY scripts ./scripts
+
+RUN pnpm install --frozen-lockfile
+
+COPY . .
+RUN OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build
+ENV OPENCLAW_PREFER_PNPM=1
+RUN pnpm ui:build
+
+ENV NODE_ENV=production
+
+RUN chown -R node:node /app
+
+USER node
+
+CMD ["node", "dist/index.js", "gateway", "--allow-unconfigured"]
+DOCKEREOF
+```
+
+---
+
+## 4.8b Patch diagnostics-otel for @opentelemetry/resources v2.x
+
+The upstream `diagnostics-otel` extension uses `new Resource()` which was replaced by
+`resourceFromAttributes()` in `@opentelemetry/resources` v2.x. Create a patched version
+and mount it via Docker volume.
+
+```bash
+#!/bin/bash
+# Create patches directory
+sudo -u openclaw mkdir -p /home/openclaw/openclaw/patches-runtime
+
+# Copy the original and patch it
+sudo docker cp openclaw-gateway:/app/extensions/diagnostics-otel/src/service.ts /tmp/otel-service.ts
+sed -i 's/import { Resource } from "@opentelemetry\/resources";/import { resourceFromAttributes } from "@opentelemetry\/resources";/' /tmp/otel-service.ts
+sed -i 's/const resource = new Resource(/const resource = resourceFromAttributes(/' /tmp/otel-service.ts
+
+sudo cp /tmp/otel-service.ts /home/openclaw/openclaw/patches-runtime/diagnostics-otel-service.ts
+sudo chown openclaw:openclaw /home/openclaw/openclaw/patches-runtime/diagnostics-otel-service.ts
+```
+
+Then add this volume mount to `openclaw-gateway` in `docker-compose.override.yml`:
+
+```yaml
+    volumes:
+      # Patch: Fix @opentelemetry/resources v2.x API change
+      - ./patches-runtime/diagnostics-otel-service.ts:/app/extensions/diagnostics-otel/src/service.ts:ro
 ```
 
 ---

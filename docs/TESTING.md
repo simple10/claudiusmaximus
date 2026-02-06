@@ -129,6 +129,7 @@ ssh -p 222 adminclaw@<VPS2_IP> "cd /home/openclaw/monitoring && docker compose p
 - `prometheus` - Up
 - `grafana` - Up
 - `loki` - Up
+- `tempo` - Up
 - `alertmanager` - Up
 - `node-exporter` - Up
 - `cadvisor` - Up
@@ -242,7 +243,7 @@ mcp__chrome-devtools__take_snapshot()
 Verify that monitoring services are bound to localhost (not exposed publicly):
 
 ```bash
-ssh -p 222 adminclaw@<VPS2_IP> "sudo ss -tlnp | grep -E '(9090|3000|3100|9093|9100|8080)'"
+ssh -p 222 adminclaw@<VPS2_IP> "sudo ss -tlnp | grep -E '(9090|3000|3100|3200|4318|9093|9100|8080)'"
 ```
 
 **Success criteria** - Services should bind to these addresses:
@@ -250,11 +251,13 @@ ssh -p 222 adminclaw@<VPS2_IP> "sudo ss -tlnp | grep -E '(9090|3000|3100|9093|91
 - `127.0.0.1:9090` - Prometheus (localhost only)
 - `127.0.0.1:3000` - Grafana (localhost only)
 - `10.0.0.2:3100` - Loki (WireGuard only)
+- `127.0.0.1:3200` - Tempo HTTP API (localhost only)
+- `10.0.0.2:4318` - Tempo OTLP receiver (WireGuard only)
 - `127.0.0.1:9093` - Alertmanager (localhost only)
 - `127.0.0.1:9100` - Node Exporter (localhost only)
 - `127.0.0.1:8080` - cAdvisor (localhost only)
 
-**Security note**: Only Loki is accessible via WireGuard (to receive logs from VPS-1). All other services are bound to localhost, providing defense-in-depth even if UFW is misconfigured.
+**Security note**: Only Loki and Tempo OTLP are accessible via WireGuard (Loki receives logs from VPS-1 Promtail, Tempo receives traces from VPS-1 OpenClaw). All other services are bound to localhost, providing defense-in-depth even if UFW is misconfigured.
 
 ---
 

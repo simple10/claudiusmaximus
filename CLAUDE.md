@@ -7,7 +7,7 @@ This document orchestrates the automated deployment of OpenClaw across two OVHCl
 | VPS | Role | WireGuard IP | Services |
 |-----|------|--------------|----------|
 | **VPS-1** | OpenClaw | `10.0.0.1` | Gateway, Sysbox, Node Exporter, Promtail |
-| **VPS-2** | Observability | `10.0.0.2` | Prometheus, Grafana, Loki, Alertmanager, cAdvisor |
+| **VPS-2** | Observability | `10.0.0.2` | Prometheus, Grafana, Loki, Tempo, Alertmanager, cAdvisor |
 
 ## Playbook Structure
 
@@ -20,7 +20,7 @@ All deployment steps are in modular playbooks under `playbooks/`:
 | `02-wireguard.md` | WireGuard tunnel between VPSs | ✓ | ✓ |
 | `03-docker.md` | Docker installation and hardening | ✓ | ✓ |
 | `04-vps1-openclaw.md` | Sysbox, networks, gateway, promtail | ✓ | - |
-| `05-vps2-observability.md` | Prometheus, Grafana, Loki, Alertmanager | - | ✓ |
+| `05-vps2-observability.md` | Prometheus, Grafana, Loki, Tempo, Alertmanager | - | ✓ |
 | `networking/cloudflare-tunnel.md` | Cloudflare Tunnel (Recommended) | ✓ | ✓ |
 | `networking/caddy.md` | Caddy reverse proxy with Origin CA | ✓ | ✓ |
 | `06-backup.md` | Backup scripts and cron jobs | ✓ | - |
@@ -411,6 +411,8 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 9. **Loki schema**: Use v13 with tsdb store
 10. **Grafana subpath**: Use `handle` not `handle_path` in Caddy
 11. **Backup permissions**: Run as root via `/etc/cron.d/`
+12. **Tempo OTLP:** Binds to WireGuard IP (10.0.0.2:4318) for trace ingestion
+13. **OpenClaw OTEL:** Keep metrics/logs disabled; use existing Prometheus/Promtail
 
 ---
 
@@ -438,6 +440,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 - [ ] All monitoring containers running
 - [ ] Prometheus scraping all targets
 - [ ] Loki receiving logs
+- [ ] Tempo OTLP receiver on WireGuard only
 - [ ] Grafana accessible
 
 ### Networking (Cloudflare Tunnel)

@@ -136,6 +136,25 @@ curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | selec
 
 ---
 
+## 7.4a Verify Tracing (VPS-2)
+
+```bash
+# Check Tempo is running
+sudo docker ps | grep tempo
+curl -s http://localhost:3200/ready
+
+# Check OTLP endpoint listening on WireGuard
+ss -tlnp | grep 4318
+
+# From VPS-1: Test OTLP connectivity
+curl -s http://10.0.0.2:4318/v1/traces -X POST -H "Content-Type: application/json" -d '{}'
+# Returns 400 (bad request) not connection refused = endpoint is reachable
+```
+
+**Expected:** Tempo container running, `/ready` returns "ready", OTLP listening on `10.0.0.2:4318`.
+
+---
+
 ## 7.5 Verify Log Shipping
 
 From VPS-2, verify Loki is receiving logs from VPS-1:
@@ -229,12 +248,16 @@ cat /etc/cron.d/openclaw-backup
 - [ ] All monitoring containers running
 - [ ] Prometheus scraping all targets
 - [ ] Loki receiving logs
+- [ ] Tempo running and ready
+- [ ] OTLP receiver on WireGuard only (10.0.0.2:4318)
 - [ ] Grafana accessible
 
 ```bash
 sudo -u openclaw docker compose ps
 curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[].health' | sort | uniq -c
 curl -s http://10.0.0.2:3100/ready
+curl -s http://localhost:3200/ready
+ss -tlnp | grep 4318
 ```
 
 ---
@@ -245,7 +268,8 @@ curl -s http://10.0.0.2:3100/ready
 2. **Login to Grafana** at `https://<grafana-domain>/_observe/grafana/`
 3. **Verify Prometheus targets** in Grafana → Explore → Prometheus
 4. **Check logs flowing** in Grafana → Explore → Loki → `{host="openclaw"}`
-5. **Trigger a test alert** (optional):
+5. **Check traces** in Grafana → Explore → Tempo → `{ resource.service.name = "openclaw-gateway" }`
+6. **Trigger a test alert** (optional):
 
    ```bash
    # Stop Node Exporter on VPS-1 temporarily
@@ -308,3 +332,4 @@ Deployment is complete when:
 6. ✅ Grafana accessible with working datasources
 7. ✅ External access working via configured networking option
 8. ✅ Backup cron job configured on VPS-1
+9. ✅ Traces appearing in Tempo from VPS-1

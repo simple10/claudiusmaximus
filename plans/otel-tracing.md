@@ -1,6 +1,6 @@
 ---
 feature: otel-tracing
-type: optional
+type: base
 target-vps: Both
 playbook: playbooks/99-new-feature-implementation.md
 ---
@@ -70,6 +70,8 @@ volumes:
 
 ```yaml
 # /home/openclaw/monitoring/tempo-config.yml
+stream_over_http_enabled: true
+
 server:
   http_listen_address: 127.0.0.1
   http_listen_port: 3200
@@ -81,17 +83,21 @@ distributor:
         http:
           endpoint: "10.0.0.2:4318"
 
+ingester:
+  max_block_duration: 5m
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+
 storage:
   trace:
     backend: local
-    wal:
-      path: /var/tempo/wal
     local:
       path: /var/tempo/blocks
-
-compactor:
-  compaction:
-    block_retention: 72h
+    wal:
+      path: /var/tempo/wal
 ```
 
 **Section 5.7** - Add Tempo datasource to `datasources.yml`:
@@ -103,10 +109,13 @@ compactor:
     url: http://127.0.0.1:3200
     editable: false
     jsonData:
-      tracesToLogs:
+      tracesToLogsV2:
         datasourceUid: loki
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
         tags: ['host', 'job']
         filterByTraceID: true
+        filterBySpanID: true
       nodeGraph:
         enabled: true
 ```
@@ -192,6 +201,18 @@ Add to Key Deployment Notes:
 2. `docker compose stop tempo && docker compose rm tempo` on VPS-2
 3. Remove Tempo datasource from Grafana provisioning
 
-## No Firewall Changes Needed
+## Firewall
 
-WireGuard subnet (10.0.0.0/24) already has full inter-VPS access.
+VPS-2 requires a UFW rule to allow WireGuard subnet traffic:
+
+```bash
+sudo ufw allow from 10.0.0.0/24
+```
+
+VPS-1 already has specific WireGuard rules (ports 9100, 18789). No changes needed on VPS-1.
+
+## Runtime Patch: @opentelemetry/resources v2.x
+
+The upstream `diagnostics-otel` extension uses `new Resource()` from `@opentelemetry/resources`,
+which was replaced by `resourceFromAttributes()` in v2.x. A patched `service.ts` is mounted via
+Docker volume in `docker-compose.override.yml` until the upstream fix is merged.

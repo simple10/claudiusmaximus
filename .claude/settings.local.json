@@ -17,7 +17,8 @@
       "WebSearch",
       "WebFetch(domain:docs.ansible.com)",
       "Bash(wc:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(sudo chown:*)"
     ]
   }
 }

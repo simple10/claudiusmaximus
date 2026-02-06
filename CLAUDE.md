@@ -415,6 +415,8 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 12. **Tempo OTLP:** Binds to WireGuard IP (10.0.0.2:4318) for trace ingestion
 13. **OpenClaw OTEL:** All signals enabled — traces→Tempo, metrics→Prometheus, logs→Loki
 14. **Bind mounts only:** Never use Docker named volumes — use bind mounts (`./data/<service>:/path`) so `rsync` can back up everything from the host
+15. **Entrypoint script:** Gateway uses bind-mounted entrypoint that cleans lock files and bootstraps sandbox images before starting
+16. **Self-restart:** `commands.restart: true` enables agents to modify config and trigger in-process restart via SIGUSR1
 
 ---
 

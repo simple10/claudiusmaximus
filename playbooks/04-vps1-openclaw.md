@@ -205,6 +205,22 @@ services:
         reservations:
           cpus: "1"
           memory: 2G
+    volumes:
+      # Patch: Fix @opentelemetry/resources v2.x API change (from 4.8b)
+      - ./patches-runtime/diagnostics-otel-service.ts:/app/extensions/diagnostics-otel/src/service.ts:ro
+      # Entrypoint script: lock cleanup, sandbox bootstrap, then exec gateway (from 4.8c)
+      - ./scripts/entrypoint-gateway.sh:/app/scripts/entrypoint-gateway.sh:ro
+    # Entrypoint handles pre-start tasks before exec-ing the gateway
+    entrypoint: ["/app/scripts/entrypoint-gateway.sh"]
+    # Args passed to entrypoint, which passes them to: node dist/index.js gateway
+    command:
+      [
+        "--allow-unconfigured",
+        "--bind",
+        "lan",
+        "--port",
+        "18789",
+      ]
     security_opt:
       - no-new-privileges:true
     environment:
@@ -223,24 +239,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s  # Sandbox image build on first boot takes time
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "5"
-    # IMPORTANT: Pass --allow-unconfigured to start without full setup
-    command:
-      [
-        "node",
-        "dist/index.js",
-        "gateway",
-        "--allow-unconfigured",
-        "--bind",
-        "lan",
-        "--port",
-        "18789",
-      ]
 
   openclaw-cli:
     # Build configuration for CLI
@@ -336,8 +340,16 @@ EOF
 # diagnostics-otel plugin exports all three signals to VPS-2 via WireGuard:
 #   traces → Tempo (4318), metrics → Prometheus (9090), logs → Loki (3100)
 # No endpoint field: per-signal routing via OTEL SDK env vars in docker-compose.override.yml
+
+# Validate commands.restart is accepted before applying:
+# sudo docker exec openclaw-gateway node dist/index.js gateway --help 2>&1 | grep -i restart
+# If OpenClaw rejects the key, remove the "commands" block below.
+
 sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
 {
+  "commands": {
+    "restart": true
+  },
   "gateway": {
     "bind": "lan",
     "mode": "local"
@@ -484,12 +496,82 @@ sudo cp /tmp/otel-service.ts /home/openclaw/openclaw/patches-runtime/diagnostics
 sudo chown openclaw:openclaw /home/openclaw/openclaw/patches-runtime/diagnostics-otel-service.ts
 ```
 
-Then add this volume mount to `openclaw-gateway` in `docker-compose.override.yml`:
+The volume mount for this patch is included in the `docker-compose.override.yml` from section 4.6.
 
-```yaml
-    volumes:
-      # Patch: Fix @opentelemetry/resources v2.x API change
-      - ./patches-runtime/diagnostics-otel-service.ts:/app/extensions/diagnostics-otel/src/service.ts:ro
+---
+
+## 4.8c Create Gateway Entrypoint Script
+
+The entrypoint script runs before the gateway starts. It handles three tasks:
+1. **Lock file cleanup** — removes stale `gateway.*.lock` files left by unclean shutdowns
+2. **Sandbox image bootstrap** — waits for the sysbox nested Docker daemon, then builds sandbox images if missing
+3. **Exec gateway** — replaces itself with the Node process so tini (from `init: true`) is the direct parent
+
+> **Note:** Do NOT use `exec tini --` in the script. Docker's `init: true` already provides tini as PID 1. Double-wrapping would break signal forwarding.
+
+```bash
+#!/bin/bash
+# Create scripts directory
+sudo -u openclaw mkdir -p /home/openclaw/openclaw/scripts
+
+# Create entrypoint script
+sudo -u openclaw tee /home/openclaw/openclaw/scripts/entrypoint-gateway.sh << 'SCRIPTEOF'
+#!/bin/bash
+set -euo pipefail
+
+# ── 1. Clean stale lock files ─────────────────────────────────────────
+# Unclean shutdowns can leave lock files that prevent the gateway from starting
+lock_dir="/home/node/.openclaw"
+if compgen -G "${lock_dir}/gateway.*.lock" > /dev/null 2>&1; then
+  echo "[entrypoint] Removing stale lock files:"
+  ls -la "${lock_dir}"/gateway.*.lock
+  rm -f "${lock_dir}"/gateway.*.lock
+  echo "[entrypoint] Lock files cleaned"
+else
+  echo "[entrypoint] No stale lock files found"
+fi
+
+# ── 2. Wait for nested Docker daemon and bootstrap sandbox images ─────
+# Sysbox starts a nested Docker daemon inside the container. We need to
+# wait for it before checking/building sandbox images.
+echo "[entrypoint] Waiting for nested Docker daemon..."
+timeout=30
+elapsed=0
+while ! docker info > /dev/null 2>&1; do
+  if [ "$elapsed" -ge "$timeout" ]; then
+    echo "[entrypoint] WARNING: Nested Docker daemon not available after ${timeout}s, skipping sandbox bootstrap"
+    break
+  fi
+  sleep 1
+  elapsed=$((elapsed + 1))
+done
+
+if docker info > /dev/null 2>&1; then
+  echo "[entrypoint] Nested Docker daemon ready (took ${elapsed}s)"
+
+  # Check if sandbox images exist; build if missing
+  if ! docker image inspect openclaw-sandbox > /dev/null 2>&1; then
+    echo "[entrypoint] Sandbox image not found, building..."
+    if [ -f /app/sandbox/Dockerfile ]; then
+      docker build -t openclaw-sandbox /app/sandbox/
+      echo "[entrypoint] Sandbox image built successfully"
+    else
+      echo "[entrypoint] WARNING: /app/sandbox/Dockerfile not found, skipping sandbox image build"
+    fi
+  else
+    echo "[entrypoint] Sandbox image already exists"
+  fi
+fi
+
+# ── 3. Start the gateway ──────────────────────────────────────────────
+# exec replaces this shell with the node process, so tini (PID 1 from
+# Docker's init: true) becomes the direct parent — proper signal handling
+echo "[entrypoint] Starting gateway: node dist/index.js gateway $*"
+exec node dist/index.js gateway "$@"
+SCRIPTEOF
+
+# Make executable
+sudo chmod +x /home/openclaw/openclaw/scripts/entrypoint-gateway.sh
 ```
 
 ---

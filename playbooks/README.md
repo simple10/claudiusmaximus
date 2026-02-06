@@ -24,6 +24,7 @@ For existing deployments, run `00-analysis-mode.md` first to verify current stat
 7. `06-backup.md` - VPS-1 only
 8. Reboot both VPSs
 9. `07-verification.md` - Both VPSs
+10. `98-post-deploy.md` - First access & device pairing (VPS-1)
 
 ## Networking Options
 

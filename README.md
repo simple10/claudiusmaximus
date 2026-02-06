@@ -1,16 +1,31 @@
 # OpenClaw on VPS
 
-This repository contains everything needed to securely deploy OpenClaw on two VPS instances with full observability.
+This repository contains everything needed to "securely" deploy OpenClaw on two VPS instances with full observability.
 
-The quick start guides recommend OVHCloud but any host provider that supports Ubuntu 24.04 or later should work.
+The quick start guide recommends OVHCloud but any provider that supports Ubuntu 24.04 or later should work.
 
-This project is an experiment for using `claude code` for devops. A significant effort was made to ensure OpenClaw
+**This project is an experiment** for using `claude code` for devops. A reasonable effort was made to ensure OpenClaw
 is running as securely as possible. However, there's no guarantee claude will always follow the playbooks as designed.
 
 It's strongly recommended to use the Cloudflare Tunnel networking option in openclaw-config.env.
 Caddy support (no Cloudflare Tunnel) is provided as an example. You will need to work with claude
-to make sure it's secure and requires device pairing. Device pairing is disabled with Cloudflare Tunnel
+to make sure it's secure and requires device pairing if using Caddy. Device pairing is disabled with Cloudflare Tunnel
 since Cloudflare is already securing access.
+
+---
+
+## Quick Start
+
+1. Clone this repo
+2. Create two new VPS's - see **[ovh_setup_guide.md](./ovh_setup_guide.md)** for recommendations
+3. Set values in openclaw-config.env
+4. Start claude code and just say `start`
+5. Start using OpenClaw: `https://openclaw.YOURDOMAIN.com/chat?token=OPENCLAW_TOKEN`
+
+Claude will interview you for any missing config values and then start the deploy process.
+After deployment, claude can be used to make any changes or manage your VPS's with the same prompt.
+
+---
 
 ## Requirements
 
@@ -52,19 +67,6 @@ since Cloudflare is already securing access.
 
 The two VPSs communicate over a secure WireGuard tunnel. No ports are exposed to the public net
 when using the Cloudflare Tunnel networking option.
-
----
-
-## Quick Start
-
-1. Clone this repo
-2. Create two new VPS's - see **[ovh_setup_guide.md](./ovh_setup_guide.md)** for recommendations
-3. Set values in openclaw-config.env
-4. Start claude code and just say `start`
-5. Start using OpenClaw: `https://openclaw.YOURDOMAIN.com/chat?token=OPENCLAW_TOKEN`
-
-Claude will interview you for any missing config values and then start the deploy process.
-After deployment, claude can be used to make any changes or manage your VPS's with the same prompt.
 
 ---
 

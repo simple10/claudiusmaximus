@@ -22,7 +22,9 @@ via the openclaw CLI running on the VPS.
 2. Create two new VPS's - see **[ovh_setup_guide.md](./ovh_setup_guide.md)** for recommendations
 3. Set values in openclaw-config.env
 4. Start claude code and just say `start`
-5. Start using OpenClaw: `https://openclaw.YOURDOMAIN.com/chat?token=OPENCLAW_TOKEN`
+   Claude will deploy and test the VPS's (10+ minutes)
+5. After deploy, claude will guide you through device pairing
+6. Start using OpenClaw: `https://openclaw.YOURDOMAIN.com/chat` or via messaging channel (Telegram, etc.)
 
 Claude will interview you for any missing config values and then start the deploy process.
 After deployment, claude can be used to make any changes or manage your VPS's with the same prompt.

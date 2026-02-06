@@ -25,6 +25,7 @@ From `../openclaw-config.env`:
 - `ANTHROPIC_API_KEY` - Required for OpenClaw
 - `TELEGRAM_BOT_TOKEN` - Optional
 - `DISCORD_BOT_TOKEN` - Optional
+- `SUBPATH_OPENCLAW` - URL subpath for the gateway UI (default: `/_openclaw`)
 
 ---
 
@@ -352,7 +353,10 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
   },
   "gateway": {
     "bind": "lan",
-    "mode": "local"
+    "mode": "local",
+    "controlUi": {
+      "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}"
+    }
   },
   "plugins": {
     "allow": ["diagnostics-otel"],

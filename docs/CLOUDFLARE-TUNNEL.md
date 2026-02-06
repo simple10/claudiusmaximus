@@ -78,7 +78,7 @@ This is where you put the lock on the door.
 | **Application name** | e.g. `OpenClaw`                      |
 | **Session duration** | Choose based on your needs (e.g. `24h`) |
 | **Application domain** | `openclaw.example.com`              |
-| **Path** (optional)  | Leave blank to protect the entire subdomain, or set a specific path like `/_openclaw/` |
+| **Path** (optional)  | Leave blank to protect the entire subdomain, or set a specific path like `<SUBPATH_OPENCLAW>/` |
 
 1. Click **Next**
 
@@ -149,7 +149,7 @@ instead of via the server config.
 
 #### Step 5: Test Access Protection
 
-1. Open `https://openclaw.yourdomain.com/_openclaw/` in an incognito window
+1. Open `https://openclaw.yourdomain.com<SUBPATH_OPENCLAW>/` in an incognito window
 2. You should see the Cloudflare Access login page
 3. Authenticate with your configured method
 4. You should now see the OpenClaw UI

@@ -197,7 +197,7 @@ The specific tests depend on which networking option you chose.
 sudo systemctl status cloudflared
 
 # Test external access (from any machine)
-curl -s https://claw.example.com/_openclaw/ | head -5
+curl -s https://claw.example.com<SUBPATH_OPENCLAW>/ | head -5
 
 # Verify direct IP access is blocked
 curl -sk --connect-timeout 5 https://<VPS1-IP>/ || echo "Direct access blocked (expected)"
@@ -210,7 +210,7 @@ curl -sk --connect-timeout 5 https://<VPS1-IP>/ || echo "Direct access blocked (
 sudo docker ps | grep caddy
 
 # Test HTTPS locally
-curl -sk https://localhost:443/_openclaw/ | head -5
+curl -sk https://localhost:443<SUBPATH_OPENCLAW>/ | head -5
 
 # Verify port 80 is blocked
 curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expected)"
@@ -274,7 +274,7 @@ ss -tlnp | grep 4318
 ## 7.8 End-to-End Test
 
 1. **Access OpenClaw** via configured domain
-2. **Login to Grafana** at `https://<grafana-domain>/_observe/grafana/`
+2. **Login to Grafana** at `https://<grafana-domain><SUBPATH_GRAFANA>/`
 3. **Verify Prometheus targets** in Grafana → Explore → Prometheus
 4. **Check logs flowing** in Grafana → Explore → Loki → `{host="openclaw"}`
 5. **Check traces** in Grafana → Explore → Tempo → `{ resource.service.name = "openclaw-gateway" }`

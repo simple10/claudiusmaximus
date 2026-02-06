@@ -9,8 +9,8 @@ Before testing, note these security configurations:
 | Setting | Value | Reason |
 |---------|-------|--------|
 | **SSH Port** | 222 (not 22) | Avoid bot scanners |
-| **OpenClaw Path** | `/_openclaw/` | Obscured URL |
-| **Grafana Path** | `/_observe/grafana/` | Obscured URL |
+| **OpenClaw Path** | `<SUBPATH_OPENCLAW>/` | Obscured URL (from openclaw-config.env) |
+| **Grafana Path** | `<SUBPATH_GRAFANA>/` | Obscured URL (from openclaw-config.env) |
 | **HTTP Port 80** | Blocked | HTTPS-only |
 | **HTTP Port 22** | Blocked | SSH on 222 |
 
@@ -181,8 +181,8 @@ Use the Chrome DevTools MCP to test the web interfaces.
 **Important**: Services use obscured paths to avoid bot scanners.
 
 ```
-# Navigate to OpenClaw admin page (note: /_openclaw/_admin path)
-mcp__chrome-devtools__navigate_page(url="https://openclaw.yourdomain.com/_openclaw/_admin")
+# Navigate to OpenClaw admin page (note: <SUBPATH_OPENCLAW>/_admin path)
+mcp__chrome-devtools__navigate_page(url="https://openclaw.yourdomain.com<SUBPATH_OPENCLAW>/_admin")
 
 # Take a snapshot to verify the page loaded
 mcp__chrome-devtools__take_snapshot()
@@ -197,8 +197,8 @@ mcp__chrome-devtools__take_snapshot()
 #### 4.2 Test Grafana Interface
 
 ```
-# Navigate to Grafana (note: /_observe/grafana/ path)
-mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com/_observe/grafana/")
+# Navigate to Grafana (note: <SUBPATH_GRAFANA>/ path)
+mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com<SUBPATH_GRAFANA>/")
 
 # Take a snapshot
 mcp__chrome-devtools__take_snapshot()
@@ -222,7 +222,7 @@ mcp__chrome-devtools__list_console_messages(types=["error"])
 #### 4.4 Verify HTTPS-Only Access and 404 on Root
 
 ```
-# Try root path - should redirect to /_openclaw/ or return 404
+# Try root path - should redirect to <SUBPATH_OPENCLAW>/ or return 404
 mcp__chrome-devtools__navigate_page(url="https://openclaw.yourdomain.com/")
 mcp__chrome-devtools__take_snapshot()
 
@@ -233,7 +233,7 @@ mcp__chrome-devtools__take_snapshot()
 
 **Success criteria**:
 
-- Root redirects to `/_openclaw/` or obscured path
+- Root redirects to `<SUBPATH_OPENCLAW>/` or obscured path
 - Random paths return 404 (not proxied to backend)
 
 ---
@@ -311,8 +311,8 @@ ssh -p 222 adminclaw@<VPS2_IP> "cat /home/openclaw/monitoring/.env | grep GRAFAN
 Then use DevTools to test:
 
 ```
-# Navigate to Grafana login (note: /_observe/grafana/ path)
-mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com/_observe/grafana/login")
+# Navigate to Grafana login (note: <SUBPATH_GRAFANA>/ path)
+mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com<SUBPATH_GRAFANA>/login")
 mcp__chrome-devtools__take_snapshot()
 
 # Fill login form (adjust uids based on snapshot)
@@ -324,8 +324,8 @@ mcp__chrome-devtools__click(uid="<login-button-uid>")
 #### 6.2 Navigate to Explore and Check Loki
 
 ```
-# Navigate to Explore page (note: /_observe/grafana/ path)
-mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com/_observe/grafana/explore")
+# Navigate to Explore page (note: <SUBPATH_GRAFANA>/ path)
+mcp__chrome-devtools__navigate_page(url="https://observe.yourdomain.com<SUBPATH_GRAFANA>/explore")
 mcp__chrome-devtools__take_snapshot()
 
 # Select Loki datasource and run a query

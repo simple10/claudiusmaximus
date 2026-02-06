@@ -41,6 +41,8 @@ From `../openclaw-config.env`:
 
 - `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., openclaw.example.com)
 - `DOMAIN_GRAFANA` - Domain for Grafana (e.g., observe.example.com)
+- `SUBPATH_OPENCLAW` - URL subpath for OpenClaw (default: `/_openclaw`)
+- `SUBPATH_GRAFANA` - URL subpath for Grafana (default: `/_observe/grafana`)
 
 ---
 
@@ -90,7 +92,11 @@ sudo mkdir -p /etc/caddy /var/log/caddy
 
 # SSL-only configuration using Cloudflare Origin CA
 # Port 80 is blocked at firewall level - no HTTP at all
-# OpenClaw is served under /_openclaw/ to avoid bot scanners
+# OpenClaw is served under <SUBPATH_OPENCLAW>/ to avoid bot scanners
+#
+# CRITICAL: Use "handle" NOT "handle_path" for OpenClaw
+# handle_path strips the path prefix, but the gateway's controlUi.basePath
+# expects the full path and strips it internally (same pattern as Grafana on VPS-2)
 sudo tee /etc/caddy/Caddyfile << 'EOF'
 {
     # Disable automatic HTTPS - we're using Cloudflare Origin CA
@@ -108,16 +114,23 @@ sudo tee /etc/caddy/Caddyfile << 'EOF'
     }
 
     # OpenClaw under obscured path to avoid bot scanners
-    handle_path /_openclaw/* {
+    # CRITICAL: Use "handle" NOT "handle_path" — the gateway's controlUi.basePath
+    # is configured to strip the prefix; the proxy must preserve the full path
+    handle <SUBPATH_OPENCLAW>/* {
         reverse_proxy localhost:18789 {
             header_up Host {host}
             header_up X-Real-IP {remote}
         }
     }
 
+    # Handle requests to <SUBPATH_OPENCLAW> without trailing slash
+    handle <SUBPATH_OPENCLAW> {
+        redir <SUBPATH_OPENCLAW>/ permanent
+    }
+
     # Redirect root to OpenClaw (optional - remove if you want 404 on root)
     handle / {
-        redir /_openclaw/ permanent
+        redir <SUBPATH_OPENCLAW>/ permanent
     }
 
     # Return 404 for all other paths
@@ -223,22 +236,22 @@ sudo tee /etc/caddy/Caddyfile << 'EOF'
     # CRITICAL: Use "handle" NOT "handle_path" for Grafana
     # handle_path strips the path prefix, causing redirect loops when Grafana
     # is configured with GF_SERVER_ROOT_URL and GF_SERVER_SERVE_FROM_SUB_PATH=true
-    # With handle, the full path /_observe/grafana/... is preserved and passed to Grafana
-    handle /_observe/grafana/* {
+    # With handle, the full path <SUBPATH_GRAFANA>/... is preserved and passed to Grafana
+    handle <SUBPATH_GRAFANA>/* {
         reverse_proxy localhost:3000 {
             header_up Host {host}
             header_up X-Real-IP {remote}
         }
     }
 
-    # Handle requests to /_observe/grafana without trailing slash
-    handle /_observe/grafana {
-        redir /_observe/grafana/ permanent
+    # Handle requests to <SUBPATH_GRAFANA> without trailing slash
+    handle <SUBPATH_GRAFANA> {
+        redir <SUBPATH_GRAFANA>/ permanent
     }
 
     # Redirect root to Grafana (optional - remove if you want 404 on root)
     handle / {
-        redir /_observe/grafana/ permanent
+        redir <SUBPATH_GRAFANA>/ permanent
     }
 
     # Return 404 for all other paths
@@ -297,7 +310,7 @@ sudo docker logs caddy
 curl -s http://localhost:18789/ | head -5
 
 # Test via Caddy (HTTPS)
-curl -sk https://localhost:443/_openclaw/ | head -5
+curl -sk https://localhost:443<SUBPATH_OPENCLAW>/ | head -5
 
 # Verify port 80 is blocked
 curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expected)"
@@ -310,7 +323,7 @@ curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expec
 sudo docker ps | grep caddy
 
 # Test Grafana via Caddy
-curl -sk https://localhost:443/_observe/grafana/ | head -5
+curl -sk https://localhost:443<SUBPATH_GRAFANA>/ | head -5
 
 # Verify port 80 is blocked
 curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expected)"
@@ -320,8 +333,8 @@ curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expec
 
 ```bash
 # Test from any machine
-curl -s https://<DOMAIN_OPENCLAW>/_openclaw/ | head -5
-curl -s https://<DOMAIN_GRAFANA>/_observe/grafana/ | head -5
+curl -s https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/ | head -5
+curl -s https://<DOMAIN_GRAFANA><SUBPATH_GRAFANA>/ | head -5
 ```
 
 ---
@@ -331,22 +344,22 @@ curl -s https://<DOMAIN_GRAFANA>/_observe/grafana/ | head -5
 ### Grafana Redirect Loop (ERR_TOO_MANY_REDIRECTS)
 
 ```bash
-# Symptom: Browser shows "too many redirects" when accessing /_observe/grafana/
+# Symptom: Browser shows "too many redirects" when accessing <SUBPATH_GRAFANA>/
 # Cause: Caddy using handle_path instead of handle
 
 # WRONG - strips path prefix, causes redirect loop:
-handle_path /_observe/grafana/* {
+handle_path <SUBPATH_GRAFANA>/* {
     reverse_proxy localhost:3000
 }
 
 # CORRECT - preserves full path:
-handle /_observe/grafana/* {
+handle <SUBPATH_GRAFANA>/* {
     reverse_proxy localhost:3000
 }
 
 # Why: Grafana with GF_SERVER_SERVE_FROM_SUB_PATH=true expects requests
-# at /_observe/grafana/..., but handle_path strips the prefix and sends /...
-# Grafana then redirects back to /_observe/grafana/, creating a loop
+# at <SUBPATH_GRAFANA>/..., but handle_path strips the prefix and sends /...
+# Grafana then redirects back to <SUBPATH_GRAFANA>/, creating a loop
 ```
 
 ### Certificate Error
@@ -392,7 +405,7 @@ sudo docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 - Port 80 is blocked at UFW level (not just Caddy)
 - Origin CA certificates are only trusted by Cloudflare
 - Set Cloudflare SSL mode to "Full (strict)" for end-to-end encryption
-- Obscured paths (`/_openclaw/`, `/_observe/grafana/`) reduce bot scanning
+- Obscured paths (`<SUBPATH_OPENCLAW>/`, `<SUBPATH_GRAFANA>/`) reduce bot scanning
 - Security headers added by Caddy (HSTS, X-Frame-Options, etc.)
 - Caddy access logs stored in `/var/log/caddy/`
 

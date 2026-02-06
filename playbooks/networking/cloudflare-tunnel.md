@@ -37,6 +37,8 @@ From `../openclaw-config.env`:
 
 - `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., openclaw.example.com)
 - `DOMAIN_GRAFANA` - Domain for Grafana (e.g., observe.example.com)
+- `SUBPATH_OPENCLAW` - URL subpath for OpenClaw (default: `/_openclaw`)
+- `SUBPATH_GRAFANA` - URL subpath for Grafana (default: `/_observe/grafana`)
 
 ## Architecture
 
@@ -149,7 +151,7 @@ cloudflared tunnel route dns openclaw <DOMAIN_OPENCLAW>
 cloudflared tunnel run openclaw
 
 # In another terminal, verify it works
-curl -s https://<DOMAIN_OPENCLAW>/_openclaw/ | head -5
+curl -s https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/ | head -5
 ```
 
 ### Step 7: Install as System Service
@@ -288,7 +290,7 @@ Add authentication via Cloudflare Access for additional security.
    - **Application name:** OpenClaw
    - **Session duration:** 24 hours
    - **Application domain:** `<DOMAIN_OPENCLAW>`
-   - **Path:** `/_openclaw/*` (or leave blank to protect entire domain)
+   - **Path:** `<SUBPATH_OPENCLAW>/*` (or leave blank to protect entire domain)
 
 4. Add a policy:
    - **Policy name:** Allowed Users
@@ -301,7 +303,7 @@ Add authentication via Cloudflare Access for additional security.
 
 ### Test Access Protection
 
-1. Open `https://<DOMAIN_OPENCLAW>/_openclaw/` in an incognito window
+1. Open `https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/` in an incognito window
 2. You should see the Cloudflare Access login page
 3. Authenticate with your configured method
 4. You should now see the OpenClaw UI
@@ -323,7 +325,7 @@ cloudflared tunnel info openclaw
 sudo ufw status | grep 443 || echo "Port 443 not in UFW (correct)"
 
 # Test external access
-curl -s https://<DOMAIN_OPENCLAW>/_openclaw/ | head -5
+curl -s https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/ | head -5
 
 # Verify direct IP access fails
 curl -sk --connect-timeout 5 https://<VPS1_IP>/ || echo "Direct access blocked (expected)"

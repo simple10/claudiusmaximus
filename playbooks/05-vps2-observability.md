@@ -23,6 +23,7 @@ This playbook configures:
 
 From `../openclaw-config.env`:
 - `DOMAIN_GRAFANA` - Domain for Grafana (e.g., observe.example.com)
+- `SUBPATH_GRAFANA` - URL subpath for Grafana (default: `/_observe/grafana`)
 
 Generated:
 - `GRAFANA_PASSWORD` - Auto-generated admin password
@@ -98,7 +99,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
       # Serve Grafana under subpath to avoid bot scanners
-      - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN:-localhost}/_observe/grafana/
+      - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN:-localhost}<SUBPATH_GRAFANA>/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
       # SECURITY: Bind to localhost only - reverse proxy handles external access
       - GF_SERVER_HTTP_ADDR=127.0.0.1

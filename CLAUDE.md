@@ -61,6 +61,10 @@ DOMAIN_OPENCLAW=openclaw.example.com
 DOMAIN_GRAFANA=observe.example.com
 ANTHROPIC_API_KEY=sk-ant-...
 
+# URL subpaths (no trailing slash; empty string "" to serve at root)
+SUBPATH_OPENCLAW=/_openclaw
+SUBPATH_GRAFANA=/_observe/grafana
+
 # Optional
 TELEGRAM_BOT_TOKEN=
 DISCORD_BOT_TOKEN=
@@ -417,6 +421,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 14. **Bind mounts only:** Never use Docker named volumes — use bind mounts (`./data/<service>:/path`) so `rsync` can back up everything from the host
 15. **Entrypoint script:** Gateway uses bind-mounted entrypoint that cleans lock files and bootstraps sandbox images before starting
 16. **Self-restart:** `commands.restart: true` enables agents to modify config and trigger in-process restart via SIGUSR1
+17. **UI subpaths:** Configure `SUBPATH_OPENCLAW` and `SUBPATH_GRAFANA` in openclaw-config.env; gateway uses `controlUi.basePath`, Grafana uses `GF_SERVER_SERVE_FROM_SUB_PATH`; Caddy must use `handle` (not `handle_path`) to preserve the prefix
 
 ---
 

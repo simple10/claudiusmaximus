@@ -1,51 +1,78 @@
-# OpenClaw Two-VPS Deployment
+# OpenClaw on VPS
 
-This repository contains everything needed to deploy OpenClaw across two VPS instances with full observability.
+This repository contains everything needed to securely deploy OpenClaw across two VPS instances with full observability.
 
 The quick start guides recommend OVHCloud but any host provider that supports Ubuntu 24.04 or later should work.
-The only major requirement is a kernel that supports sysbox.
+
+## Requirements
+
+- **Claude Code** - used to deploy and manage the VPS's
+- **(2x) VPS**
+  - Minimum: 4GB RAM & 2 vCPUS
+  - Recommended: 8GB+ RAM & 4+ vCPUS
+  - Linux distro with kernel that supports sysbox (for OpenClaw VPS)
+    - Minimum: 5.12+ kernel
+    - Recommended: Ubuntu 24.04+
+  - Root SSH support - claude needs to be able to SSH into the servers
+- **Anthropic API Key** - needed by OpenClaw to run onboarding process
+- **Domain or Subdomains** - needed if using Cloudflare Tunnel
+
+---
 
 ## Architecture
 
 | VPS | Role | Services |
 |-----|------|----------|
 | **VPS-1** | OpenClaw | Gateway, Sysbox runtime, Node Exporter, Promtail |
-| **VPS-2** | Observability | Prometheus, Grafana, Loki, Alertmanager, cAdvisor |
+| **VPS-2** | Observability | Prometheus, Grafana, Tempo, Loki, Alertmanager, cAdvisor |
 
-The two VPSs communicate over a secure WireGuard tunnel (`10.0.0.1` ↔ `10.0.0.2`).
-
----
-
-## Prerequisites
-
-- Two VPS instances (Ubuntu 24.04 LTS)
-- SSH key pair for authentication
-- Anthropic API key for OpenClaw (placeholder can be used)
-- (Optional) Domain with Cloudflare DNS for SSL
-
-Anthropic API key is needed for OpenClaw to run.
-However, it can be added after setup is complete.
+The two VPSs communicate over a secure WireGuard tunnel. No ports are exposed to the public net
+when using the Cloudflare Tunnel networking option.
 
 ---
 
 ## Quick Start
 
+1. Clone this repo
+2. Create two new VPS's - see **[ovh_setup_guide.md](./ovh_setup_guide.md)** for recommendations
+3. Set values in openclaw-config.env
+4. Start claude code and just say `start`
+5. Start using OpenClaw: `https://openclaw.YOURDOMAIN.com/chat?token=OPENCLAW_TOKEN`
+
+Claude will interview you for any missing config values and then start the deploy process.
+After deployment, claude can be used to make any changes or manage your VPS's with the same prompt.
+
+---
+
+## Configuration
+
 ### Step 1: Set Up OVHCloud Account and VPSs
+
+Any VPS provider can be used as long as they meet the minimum requirements.
 
 Follow the detailed instructions in **[ovh_setup_guide.md](./ovh_setup_guide.md)** to:
 
 1. Create an OVHCloud account
-2. Order two VPS-2 instances
-3. Generate and configure SSH keys
+2. Generate a new SSH key
+3. Order two VPS-2 instances - add your public SSH key during checkout
 4. Verify SSH access to both VPSs
-5. Create the `openclaw-config.env` configuration file
-6. Create or add Anthropic Key, Telegram Bot, etc. to env file
 
 ### Step 2: Create Config Env File
+
+Clone this repo first if you haven't already.
+
+```bash
+git clone git@github.com>:simple10/claudiusmaximus.git openclaw-vps
+cd openclaw-vps
+```
+
+Create your openclaw-config.env
 
 ```bash
 cp openclaw-config.env.example openclaw-config.env
 ```
+
+Then, add your VPS IPs to the config file.
 
 ### Step 2.1: Add Keys for OpenClaw (for messaging channels)
 
@@ -82,48 +109,52 @@ Post-deploy steps will be needed to configure Cloudflare Access (see below).
 
 ### Step 3: Deploy with Claude Code
 
-You're now ready for Claude Code to automate the rest. Provide Claude Code with:
+You're now ready for Claude Code to automate the rest.
 
-1. **The configuration file**: `~/openclaw-config.env`
-2. **The CLAUDE.md file**: Contains all instructions for automated setup
-3. **SSH access**: Claude Code will need to run commands on both VPSs
-
-4. Ensure your SSH key is loaded:
+1. Ensure your SSH key is loaded:
 
    ```bash
    ssh-add ~/.ssh/ovh_openclaw_ed25519
    ```
 
-5. Open Claude Code in this directory
+2. Open Claude Code in this directory
 
    ```bash
    claude
    ```
 
-6. Ask Claude to deploy OpenClaw
+3. Start chatting with Claude
 
-   **Example Prompt:**
-   > Deploy the VPS servers following CLAUDE.md and using settings in openclaw-config.env
+   > start
 
-### What Claude Code Will Do
+[CLAUDE.md](CLAUDE.md) is configured to start an interview process at the start of a conversation.
+For future conversations, you can skip the interview by just asking it to perform a specific task.
+
+e.g.
+> Restart the openclaw gateway container
+
+### What Claude Code Will Do During Deploy
+
+Claude runs the various [playbooks](/playbooks/) using values from openclaw-config.env
 
 1. **On both VPSs:**
    - System updates and hardening
-   - Create dedicated `openclaw` user
+   - Create dedicated `adminclaw` user
    - Configure UFW firewall
    - Set up Fail2ban
    - Install Docker
    - Set up WireGuard tunnel between VPSs
+   - Harden the VPS: change SSH port, disable password SSH, limit sudo, etc.
 
 2. **On VPS-1 (OpenClaw):**
    - Install Sysbox runtime
-   - Deploy OpenClaw gateway
-   - Configure Caddy reverse proxy
+   - Deploy OpenClaw gateway to a container
    - Set up Node Exporter + Promtail (ships metrics/logs to VPS-2)
-   - Configure Cloudflare Tunnel or Caddy
+   - Configure Cloudflare Tunnel (recommended) or Caddy reverse proxy
+   - Configure automated backups of openclaw data
 
 3. **On VPS-2 (Observability):**
-   - Deploy Prometheus, Grafana, Loki, Alertmanager
+   - Deploy Prometheus, Grafana, Tempo, Loki, Alertmanager (LGTM stack)
    - Configure dashboards and alerting
    - Set up log aggregation
    - Configure Cloudflare Tunnel or Caddy
@@ -146,23 +177,32 @@ Optionally ask Claude to run end-to-end tests:
 
 Claude will run a series of checks via ssh on the two VPS, then use a browser to check the UIs.
 
-## Post-Deployment: Getting Started
+## Post-Deployment: Getting Started with OpenClaw
 
 ### Access Your OpenClaw Dashboard
 
-1. Navigate to your OpenClaw URL:
-   - With domain: `https://claw.yourdomain.com<SUBPATH_OPENCLAW>/_admin`
-   - Without domain: `https://<VPS-1-IP><SUBPATH_OPENCLAW>/_admin`
+Ask claude to give you the OpenClaw admin URL to start chatting with OpenClaw.
 
-2. **Important**: You need the gateway token to access the admin interface:
+> Please give me the OpenClaw url with the token
 
-   ```bash
-   # SSH to VPS-1 and get the token (note: SSH uses port 222, user is adminclaw)
-   ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS-1-IP>
-   cat /home/openclaw/openclaw/.env | grep OPENCLAW_GATEWAY_TOKEN
-   ```
+The URL should look something like: `https://openclaw.YOURDOMAIN.com/chat?token=OPENCLAW_TOKEN`
 
-3. Enter the token when prompted at the `_admin` page
+This will take you to the OpenClaw web UI where you can start the onboarding process.
+If you're using Cloudflare Tunnel option, you'll need to [configure the tunnel](docs/CLOUDFLARE-TUNNEL.md)
+before the URL will work.
+
+If claude is unable to get the token, you can get it directly from the openclaw CLI.
+
+```bash
+# SSH into the openclaw-gateway container
+./scripts/openclaw_remote.sh
+
+# Then run the CLI to get the dashboard link with token
+# openclaw.mjs is in the /app dir which is the default login home
+node openclaw.mjs dashboard --no-open
+# Outputs url with token
+# Copy the token and use with your public URL
+```
 
 ### Access Grafana
 
@@ -194,36 +234,6 @@ Claude will run a series of checks via ssh on the two VPS, then use a browser to
 ---
 
 ## Verification
-
-After deployment, verify everything is working:
-
-### Quick Health Checks
-
-```bash
-# Check OpenClaw health endpoint (via obscured path)
-curl -k https://<VPS-1-IP><SUBPATH_OPENCLAW>/health
-
-# Check Grafana is responding (via obscured path)
-curl -k https://<VPS-2-IP><SUBPATH_GRAFANA>/api/health
-```
-
-### Service Status
-
-```bash
-# On VPS-1 (SSH port 222, user adminclaw)
-ssh -p 222 adminclaw@<VPS-1-IP> "cd /home/openclaw/openclaw && sudo -u openclaw docker compose ps"
-
-# On VPS-2 (SSH port 222, user adminclaw)
-ssh -p 222 adminclaw@<VPS-2-IP> "cd /home/openclaw/monitoring && sudo -u openclaw docker compose ps"
-```
-
-### WireGuard Tunnel
-
-```bash
-# On VPS-1 (SSH port 222, user adminclaw)
-ssh -p 222 adminclaw@<VPS-1-IP> "sudo wg show"
-ssh -p 222 adminclaw@<VPS-1-IP> "ping -c 3 10.0.0.2"
-```
 
 For comprehensive testing, see **[docs/TESTING.md](./docs/TESTING.md)**.
 
@@ -258,9 +268,11 @@ openclaw-vps/
 
 ## Troubleshooting
 
+TODO: This section is out of date and needs to be updated.
+
 ### Can't Access OpenClaw Admin
 
-- Ensure you're using the correct URL: `<SUBPATH_OPENCLAW>/_admin` (not just `/_admin`)
+- Ensure you're using the correct URL: `/_openclaw/_admin` (not just `/_admin`)
 - Verify the gateway token is correct
 - Verify SSL networking is correct:
   - Check Cloudflare Access if using Cloudflare Tunnel
@@ -310,8 +322,8 @@ sudo ufw status | grep 51820
 - **SSH key-only** - password authentication is disabled
 - **Adminclaw user** has passwordless sudo for automation
 - **Obscured URL paths**: Services use non-standard paths to avoid bot scanners:
-  - OpenClaw: `<SUBPATH_OPENCLAW>/` (admin at `<SUBPATH_OPENCLAW>/_admin`)
-  - Grafana: `<SUBPATH_GRAFANA>/`
+  - OpenClaw: `/_openclaw/` (admin at `/_openclaw/_admin`)
+  - Grafana: `/_observe/grafana/`
 - Gateway token should be kept secret - it provides admin access
 - SSL certificates and private keys are sensitive - never commit to git
 - The `.gitignore` excludes `*.env` and `certs/` by default

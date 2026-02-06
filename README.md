@@ -1,6 +1,9 @@
 # OpenClaw Two-VPS Deployment
 
-This repository contains everything needed to deploy OpenClaw across two OVHCloud VPS instances with full observability.
+This repository contains everything needed to deploy OpenClaw across two VPS instances with full observability.
+
+The quick start guides recommend OVHCloud but any host provider that supports Ubuntu 24.04 or later should work.
+The only major requirement is a kernel that supports sysbox.
 
 ## Architecture
 

@@ -151,8 +151,8 @@ Claude will run a series of checks via ssh on the two VPS, then use a browser to
 ### Access Your OpenClaw Dashboard
 
 1. Navigate to your OpenClaw URL:
-   - With domain: `https://claw.yourdomain.com/_openclaw/_admin`
-   - Without domain: `https://<VPS-1-IP>/_openclaw/_admin`
+   - With domain: `https://claw.yourdomain.com<SUBPATH_OPENCLAW>/_admin`
+   - Without domain: `https://<VPS-1-IP><SUBPATH_OPENCLAW>/_admin`
 
 2. **Important**: You need the gateway token to access the admin interface:
 
@@ -167,8 +167,8 @@ Claude will run a series of checks via ssh on the two VPS, then use a browser to
 ### Access Grafana
 
 1. Navigate to your Grafana URL:
-   - With domain: `https://observe.yourdomain.com/_observe/grafana/`
-   - Without domain: `https://<VPS-2-IP>/_observe/grafana/`
+   - With domain: `https://observe.yourdomain.com<SUBPATH_GRAFANA>/`
+   - Without domain: `https://<VPS-2-IP><SUBPATH_GRAFANA>/`
 
 2. Get the Grafana password:
 
@@ -201,10 +201,10 @@ After deployment, verify everything is working:
 
 ```bash
 # Check OpenClaw health endpoint (via obscured path)
-curl -k https://<VPS-1-IP>/_openclaw/health
+curl -k https://<VPS-1-IP><SUBPATH_OPENCLAW>/health
 
 # Check Grafana is responding (via obscured path)
-curl -k https://<VPS-2-IP>/_observe/grafana/api/health
+curl -k https://<VPS-2-IP><SUBPATH_GRAFANA>/api/health
 ```
 
 ### Service Status
@@ -260,7 +260,7 @@ openclaw-vps/
 
 ### Can't Access OpenClaw Admin
 
-- Ensure you're using the correct URL: `/_openclaw/_admin` (not just `/_admin`)
+- Ensure you're using the correct URL: `<SUBPATH_OPENCLAW>/_admin` (not just `/_admin`)
 - Verify the gateway token is correct
 - Verify SSL networking is correct:
   - Check Cloudflare Access if using Cloudflare Tunnel
@@ -310,8 +310,8 @@ sudo ufw status | grep 51820
 - **SSH key-only** - password authentication is disabled
 - **Adminclaw user** has passwordless sudo for automation
 - **Obscured URL paths**: Services use non-standard paths to avoid bot scanners:
-  - OpenClaw: `/_openclaw/` (admin at `/_openclaw/_admin`)
-  - Grafana: `/_observe/grafana/`
+  - OpenClaw: `<SUBPATH_OPENCLAW>/` (admin at `<SUBPATH_OPENCLAW>/_admin`)
+  - Grafana: `<SUBPATH_GRAFANA>/`
 - Gateway token should be kept secret - it provides admin access
 - SSL certificates and private keys are sensitive - never commit to git
 - The `.gitignore` excludes `*.env` and `certs/` by default

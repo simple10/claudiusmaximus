@@ -364,8 +364,9 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
 }
 JSONEOF
 
-# Ensure container (uid 1000) can read/write
+# Ensure container (uid 1000) can read/write, and not world-readable
 sudo chown 1000:1000 /home/openclaw/.openclaw/openclaw.json
+sudo chmod 600 /home/openclaw/.openclaw/openclaw.json
 ```
 
 ---

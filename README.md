@@ -8,9 +8,11 @@ The quick start guide recommends OVHCloud but any provider that supports Ubuntu 
 is running as securely as possible. However, there's no guarantee claude will always follow the playbooks as designed.
 
 It's strongly recommended to use the Cloudflare Tunnel networking option in openclaw-config.env.
-Caddy support (no Cloudflare Tunnel) is provided as an example. You will need to work with claude
-to make sure it's secure and requires device pairing if using Caddy. Device pairing is disabled with Cloudflare Tunnel
-since Cloudflare is already securing access.
+Caddy support (no Cloudflare Tunnel) is provided as an example.
+
+Cloudflare Tunnel requires manual device pairing after initial setup. Claude should run the post deploy playbook
+and guide you through the process. It requires visiting the openclaw UI with a token, then approving the request
+via the openclaw CLI running on the VPS.
 
 ---
 

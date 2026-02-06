@@ -729,6 +729,29 @@ docker network create --driver bridge --subnet 172.30.0.0/24 openclaw-gateway-ne
 
 ---
 
+## Updating OpenClaw
+
+The `openclaw update` CLI command does **not** work inside Docker — the `.git` directory is excluded by `.dockerignore`, so the update tool reports `not-git-install`. Instead, update by rebuilding from the host git repo.
+
+```bash
+#!/bin/bash
+# 1. Pull latest source
+sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && git pull origin main'
+
+# 2. Rebuild the image
+sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker build -f Dockerfile.custom -t openclaw:local .'
+
+# 3. Recreate containers with the new image
+sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker compose up -d'
+
+# 4. Verify new version
+sudo docker exec openclaw-gateway node dist/index.js --version
+```
+
+> **Note:** Step 3 automatically stops the old container and starts a new one from the rebuilt image. Expect a brief gateway downtime during the restart.
+
+---
+
 ## Security Notes
 
 - Container runs with `read_only: true` filesystem

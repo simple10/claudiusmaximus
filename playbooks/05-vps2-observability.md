@@ -163,7 +163,7 @@ services:
     network_mode: host
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.10.0
     container_name: tempo
     restart: unless-stopped
     volumes:

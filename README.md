@@ -21,6 +21,22 @@ The quick start guides recommend OVHCloud but any host provider that supports Ub
 
 ## Architecture
 
+```test
+                    Cloudflare Tunnel
+                    (public HTTPS access)
+                            │
+            ┌───────────────┼───────────────┐
+            ▼                               ▼
+  ┌──────────────────┐            ┌──────────────────┐
+  │  VPS-1: OpenClaw │            │ VPS-2: Monitoring │
+  │                  │  WireGuard │                   │
+  │  Gateway         │───────────>│  Grafana          │
+  │  Promtail        │  telemetry │  Prometheus       │
+  │  Node Exporter   │            │  Loki             │
+  │                  │            │  Tempo            │
+  └──────────────────┘            └──────────────────┘
+```
+
 | VPS | Role | Services |
 |-----|------|----------|
 | **VPS-1** | OpenClaw | Gateway, Sysbox runtime, Node Exporter, Promtail |
@@ -200,6 +216,7 @@ If claude is unable to get the token, you can get it directly from the openclaw 
 # Then run the CLI to get the dashboard link with token
 # openclaw.mjs is in the /app dir which is the default login home
 node openclaw.mjs dashboard --no-open
+
 # Outputs url with token
 # Copy the token and use with your public URL
 ```

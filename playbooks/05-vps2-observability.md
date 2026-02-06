@@ -37,7 +37,22 @@ sudo -u openclaw bash << 'EOF'
 mkdir -p /home/openclaw/monitoring
 mkdir -p /home/openclaw/monitoring/grafana/provisioning/datasources
 mkdir -p /home/openclaw/monitoring/grafana/provisioning/dashboards
+
+# Persistent data directories (bind mounts instead of named volumes)
+# These live under monitoring/ so a single rsync captures everything
+mkdir -p /home/openclaw/monitoring/data/prometheus
+mkdir -p /home/openclaw/monitoring/data/grafana
+mkdir -p /home/openclaw/monitoring/data/loki
+mkdir -p /home/openclaw/monitoring/data/tempo
+mkdir -p /home/openclaw/monitoring/data/alertmanager
 EOF
+
+# Fix ownership per container expectations
+sudo chown -R 65534:65534 /home/openclaw/monitoring/data/prometheus
+sudo chown -R 65534:65534 /home/openclaw/monitoring/data/alertmanager
+sudo chown -R 472:root /home/openclaw/monitoring/data/grafana
+sudo chown -R 10001:10001 /home/openclaw/monitoring/data/loki
+sudo chown -R 10001:10001 /home/openclaw/monitoring/data/tempo
 ```
 
 ---
@@ -58,7 +73,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./alerts.yml:/etc/prometheus/alerts.yml:ro
-      - prometheus_data:/prometheus
+      - ./data/prometheus:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -76,7 +91,7 @@ services:
     container_name: grafana
     restart: unless-stopped
     volumes:
-      - grafana_data:/var/lib/grafana
+      - ./data/grafana:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
       - GF_SECURITY_ADMIN_USER=admin
@@ -95,7 +110,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./loki-config.yml:/etc/loki/local-config.yaml:ro
-      - loki_data:/loki
+      - ./data/loki:/loki
     command: -config.file=/etc/loki/local-config.yaml
     # NOTE: Loki needs WireGuard access - Promtail on VPS-1 pushes logs to 10.0.0.2:3100
     # Binding configured in loki-config.yml to listen on WireGuard interface
@@ -107,7 +122,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - alertmanager_data:/alertmanager
+      - ./data/alertmanager:/alertmanager
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
@@ -152,19 +167,14 @@ services:
     restart: unless-stopped
     volumes:
       - ./tempo-config.yml:/etc/tempo/config.yaml:ro
-      - tempo_data:/var/tempo
+      - ./data/tempo:/var/tempo
     command: ["-config.file=/etc/tempo/config.yaml"]
     # NOTE: Tempo needs WireGuard access - OpenClaw on VPS-1 pushes traces to 10.0.0.2:4318
     # Binding configured in tempo-config.yml
     network_mode: host
 
 # No custom networks needed - all services use host network with localhost binding
-volumes:
-  prometheus_data:
-  grafana_data:
-  loki_data:
-  alertmanager_data:
-  tempo_data:
+# Data persisted via bind mounts under ./data/ (no named volumes)
 EOF
 ```
 

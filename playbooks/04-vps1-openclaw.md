@@ -275,6 +275,8 @@ services:
       - ./promtail-config.yml:/etc/promtail/config.yml:ro
       - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Persist positions.yaml so Promtail doesn't re-ship logs after restart
+      - ./promtail-positions:/tmp
     command: -config.file=/etc/promtail/config.yml
     network_mode: host
 

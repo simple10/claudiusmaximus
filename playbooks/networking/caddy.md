@@ -138,14 +138,17 @@ EOF
 ### Step 4: Run Caddy
 
 ```bash
+# Create bind mount directories for Caddy persistent data
+sudo mkdir -p /etc/caddy/data /etc/caddy/config
+
 docker run -d \
     --name caddy \
     --restart unless-stopped \
     --network host \
     -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
     -v /etc/caddy/certs:/etc/caddy/certs:ro \
-    -v caddy_data:/data \
-    -v caddy_config:/config \
+    -v /etc/caddy/data:/data \
+    -v /etc/caddy/config:/config \
     -v /var/log/caddy:/var/log/caddy \
     caddy:2-alpine
 ```
@@ -256,14 +259,17 @@ EOF
 ### Step 4: Run Caddy
 
 ```bash
+# Create bind mount directories for Caddy persistent data
+sudo mkdir -p /etc/caddy/data /etc/caddy/config
+
 docker run -d \
     --name caddy \
     --restart unless-stopped \
     --network host \
     -v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
     -v /etc/caddy/certs:/etc/caddy/certs:ro \
-    -v caddy_data:/data \
-    -v caddy_config:/config \
+    -v /etc/caddy/data:/data \
+    -v /etc/caddy/config:/config \
     -v /var/log/caddy:/var/log/caddy \
     caddy:2-alpine
 ```
@@ -400,6 +406,9 @@ If you later want to switch to Cloudflare Tunnel:
 # Stop and remove Caddy
 sudo docker stop caddy
 sudo docker rm caddy
+
+# Remove Caddy data directories
+sudo rm -rf /etc/caddy/data /etc/caddy/config
 
 # Remove port 443 from UFW
 sudo ufw delete allow 443/tcp

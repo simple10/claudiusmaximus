@@ -91,6 +91,13 @@ Any variables or settings needed:
 - Firewall changes needed
 - Access control considerations
 
+## Storage
+
+- All persistent data MUST use bind mounts, never Docker named volumes
+- Use `./data/<service>:/container/path` convention
+- Set correct UID/GID ownership on host directories
+- This ensures `rsync` can back up everything from the host filesystem
+
 ## Verification
 
 How to verify the feature works:

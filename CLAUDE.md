@@ -39,6 +39,7 @@ See [playbooks/README.md](playbooks/README.md) for detailed playbook documentati
 - **Preserve comments in config files.** Comments document intent and aid future maintenance.
 - **Update stale comments.** If code changes make a comment inaccurate, fix the comment.
 - **Add comments for non-obvious settings.** Explain *why*, not *what*.
+- **Always use bind mounts, never named volumes.** All Docker container data must use bind mounts to directories under the service's working directory (e.g., `./data/<service>:/path`). Named volumes hide data inside `/var/lib/docker/volumes/` where it cannot be easily backed up with `rsync`. Bind mounts keep everything on the host filesystem under known paths.
 
 ---
 
@@ -413,6 +414,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 11. **Backup permissions**: Run as root via `/etc/cron.d/`
 12. **Tempo OTLP:** Binds to WireGuard IP (10.0.0.2:4318) for trace ingestion
 13. **OpenClaw OTEL:** All signals enabled — traces→Tempo, metrics→Prometheus, logs→Loki
+14. **Bind mounts only:** Never use Docker named volumes — use bind mounts (`./data/<service>:/path`) so `rsync` can back up everything from the host
 
 ---
 

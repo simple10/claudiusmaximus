@@ -49,6 +49,7 @@ tar -czf "${BACKUP_FILE}" \
     .openclaw/credentials \
     .openclaw/workspace \
     openclaw/.env \
+    openclaw/promtail-positions \
     2>/dev/null || true
 
 # Set ownership so container can also access backups if needed
@@ -123,12 +124,33 @@ cat /home/openclaw/.openclaw/logs/backup.log
 
 ## What Gets Backed Up
 
+### VPS-1 (OpenClaw)
+
 | Path | Description |
 |------|-------------|
 | `.openclaw/openclaw.json` | OpenClaw configuration |
 | `.openclaw/credentials/` | API keys and tokens |
 | `.openclaw/workspace/` | User workspaces and data |
 | `openclaw/.env` | Environment variables |
+| `openclaw/promtail-positions/` | Promtail log positions (prevents duplicate log ingestion) |
+
+### VPS-2 (Observability)
+
+All persistent data lives under `/home/openclaw/monitoring/`. A single `rsync` of this directory captures configs and data:
+
+| Path | Description | Owner UID |
+|------|-------------|-----------|
+| `monitoring/data/prometheus/` | Metrics TSDB (30d retention) | 65534 (nobody) |
+| `monitoring/data/grafana/` | Dashboards, users, settings | 472 |
+| `monitoring/data/loki/` | Log chunks and index | 10001 |
+| `monitoring/data/tempo/` | Trace blocks and WAL | 10001 |
+| `monitoring/data/alertmanager/` | Alert silences and state | 65534 (nobody) |
+| `monitoring/*.yml` | Service configuration files | openclaw |
+| `monitoring/.env` | Grafana password | openclaw |
+
+### Storage Convention
+
+All Docker containers use **bind mounts** (never named volumes) so data is directly accessible on the host for `rsync` backup. New services must follow the `./data/<service>:/container/path` convention.
 
 ---
 
@@ -220,8 +242,11 @@ rclone sync /home/openclaw/.openclaw/backups remote:openclaw-backups
 ### Using rsync to another server
 
 ```bash
-# Add to cron job
-rsync -avz /home/openclaw/.openclaw/backups/ user@backup-server:/path/to/backups/
+# VPS-1: Backup OpenClaw config and data
+rsync -avz /home/openclaw/.openclaw/ user@backup-server:/path/to/backups/vps1-openclaw/
+
+# VPS-2: Backup entire monitoring stack (configs + all persistent data)
+rsync -avz /home/openclaw/monitoring/ user@backup-server:/path/to/backups/vps2-monitoring/
 ```
 
 ---

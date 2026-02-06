@@ -296,6 +296,7 @@ openclaw-vps/
     ├── 05-vps2-observability.md
     ├── 06-backup.md
     ├── 07-verification.md
+    ├── 98-post-deployment.md
     └── networking/
         ├── cloudflare-tunnel.md
         └── caddy.md

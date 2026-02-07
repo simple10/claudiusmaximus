@@ -10,20 +10,21 @@ The current OpenClaw gateway on VPS-1 runs with a minimal sandbox image (`opencl
 2. **Common sandbox image** — Pre-built image with Node.js, git, and dev tools (replaces the minimal default)
 3. **Gateway apt packages** — `ffmpeg`, `build-essential`, and `imagemagick` baked into the gateway Docker image at build time
 4. **Claude Code CLI** — `@anthropic-ai/claude-code` installed globally in the gateway image so agents can use it as a coding tool
+5. **Fix openclaw.json permissions** — Ensure `chmod 600` on every startup via entrypoint (security audit CRITICAL fix)
 
 ## Files to Modify
 
-### 1. `scripts/build-openclaw.sh` — Add `--build-arg` for apt packages
+### 1. `scripts/build-openclaw.sh` — Add `--build-arg` and Claude Code patch
 
-Line 78 currently:
+The build script now has 3 existing patches (Dockerfile deps, OTEL v2.x, diagnostic events dual-bundle). Two changes needed:
+
+**a) Line 90** — Change `docker build` (section 4) to pass apt packages:
 
 ```bash
+# Current:
 docker build -t openclaw:local .
-```
 
-Change to:
-
-```bash
+# New:
 docker build \
   ${OPENCLAW_DOCKER_APT_PACKAGES:+--build-arg OPENCLAW_DOCKER_APT_PACKAGES="$OPENCLAW_DOCKER_APT_PACKAGES"} \
   -t openclaw:local .
@@ -31,10 +32,10 @@ docker build \
 
 The upstream Dockerfile already has an `ARG OPENCLAW_DOCKER_APT_PACKAGES` and conditional install. This just passes it through.
 
-Also add a new patch (patch 3) to install Claude Code globally. Insert `RUN npm install -g @anthropic-ai/claude-code` into the Dockerfile before the final `CMD` instruction, following the same auto-skip pattern as existing patches:
+**b) Add new patch #4** (before the build step) — Install Claude Code CLI globally in the gateway image:
 
 ```bash
-# ── 3. Patch Dockerfile to install Claude Code CLI ────────────────────
+# ── 4. Patch Dockerfile to install Claude Code CLI ────────────────────
 if ! grep -q "@anthropic-ai/claude-code" Dockerfile; then
   echo "[build] Patching Dockerfile to install Claude Code CLI..."
   sed -i '/^CMD /i RUN npm install -g @anthropic-ai/claude-code' Dockerfile
@@ -43,7 +44,7 @@ else
 fi
 ```
 
-This installs Claude Code as a global npm package in the gateway image. The `claude` binary will be available on PATH for agents to invoke.
+Renumber existing sections: build becomes #5, restore becomes #6. The `claude` binary will be available on PATH for agents to invoke.
 
 ### 2. `playbooks/04-vps1-openclaw.md` — Update 4 sections
 
@@ -53,11 +54,13 @@ This installs Claude Code as a global npm package in the gateway image. The `cla
 OPENCLAW_DOCKER_APT_PACKAGES=ffmpeg build-essential imagemagick
 ```
 
-**Section 4.6 (docker-compose.override.yml)** — Change `start_period`:
+**Section 4.6 (docker-compose.override.yml)** — Change `start_period` (line 242):
 
 ```yaml
 start_period: 300s  # Extended: first boot builds 3 sandbox images inside nested Docker
 ```
+
+Note: OTEL env vars are now hardcoded in compose (lines 231-234), not referenced from .env.
 
 **Section 4.8 (openclaw.json)** — Add `agents` and `tools` blocks to both Cloudflare Tunnel and Caddy variants (before closing `}`):
 
@@ -118,7 +121,24 @@ Key decisions:
 - `"browser"` removed from deny list so sandbox agents can use the browser tool
 - `mode: "non-main"` — only sub-agents run in sandboxes, main agent unsandboxed
 
-**Section 4.8c (entrypoint)** — Add common + browser image bootstrap after existing sandbox block (before section 3 "Exec the command"):
+**Section 4.8c (entrypoint)** — Three additions:
+
+**a) Add chmod fix at the top** (after lock file cleanup, before Docker daemon wait). The gateway rewrites `openclaw.json` on config changes without preserving 600 permissions, causing the security audit to flag it as CRITICAL:
+
+```bash
+# ── 1b. Fix openclaw.json permissions (security audit CRITICAL) ───────
+# The gateway may rewrite this file with looser permissions on config changes
+config_file="/home/node/.openclaw/openclaw.json"
+if [ -f "$config_file" ]; then
+  current_perms=$(stat -c '%a' "$config_file" 2>/dev/null || stat -f '%Lp' "$config_file" 2>/dev/null)
+  if [ "$current_perms" != "600" ]; then
+    chmod 600 "$config_file"
+    echo "[entrypoint] Fixed openclaw.json permissions: ${current_perms} -> 600"
+  fi
+fi
+```
+
+**b) Add common + browser image bootstrap** after existing sandbox block (before "Exec the command"):
 
 ```bash
   # Build common sandbox image if missing (includes Node.js, git, common tools)
@@ -153,7 +173,7 @@ Key decisions:
 Standalone extras playbook with sections:
 
 - E.1: Update `.env` with `OPENCLAW_DOCKER_APT_PACKAGES`
-- E.2: Deploy updated build script, rebuild gateway image
+- E.2: Deploy updated build script (adds patch #4 for Claude Code + `--build-arg` for apt packages), rebuild gateway image
 - E.3: Deploy updated entrypoint with common + browser bootstrap
 - E.4: Update `openclaw.json` with agents/sandbox/browser/tools config
 - E.5: Update `docker-compose.override.yml` start_period
@@ -196,3 +216,4 @@ Browser sandboxes run inside the Sysbox nested Docker daemon. The gateway proxie
 5. `sudo docker exec openclaw-gateway which ffmpeg` — confirm gateway apt packages installed
 6. `sudo docker exec openclaw-gateway which convert` — confirm imagemagick installed
 7. `sudo docker exec openclaw-gateway claude --version` — confirm Claude Code CLI installed
+8. `sudo docker exec openclaw-gateway stat -c '%a' /home/node/.openclaw/openclaw.json` — should return `600`

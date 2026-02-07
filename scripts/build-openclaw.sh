@@ -9,6 +9,7 @@
 #   3. Diagnostic events: use globalThis for shared listener set (dual-bundle fix)
 #      The diagnostic-events.ts module is bundled into both loader chunk and plugin-sdk,
 #      creating two separate listener Sets. Using globalThis ensures they share one Set.
+#   4. Dockerfile: install Claude Code CLI globally (@anthropic-ai/claude-code)
 #
 # Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 set -euo pipefail
@@ -85,11 +86,22 @@ else
   echo "[build] Diagnostic events patch not needed (upstream fixed or already patched)"
 fi
 
-# ── 4. Build image ───────────────────────────────────────────────────
-echo "[build] Building openclaw:local..."
-docker build -t openclaw:local .
+# ── 4. Patch Dockerfile to install Claude Code CLI ────────────────────
+if ! grep -q "@anthropic-ai/claude-code" Dockerfile; then
+  echo "[build] Patching Dockerfile to install Claude Code CLI..."
+  # Insert before USER (not CMD) so npm install runs as root
+  sed -i '/^USER /i RUN npm install -g @anthropic-ai/claude-code' Dockerfile
+else
+  echo "[build] Claude Code CLI already in Dockerfile (already patched)"
+fi
 
-# ── 5. Restore patched files (keep git working tree clean) ───────────
+# ── 5. Build image ───────────────────────────────────────────────────
+echo "[build] Building openclaw:local..."
+docker build \
+  ${OPENCLAW_DOCKER_APT_PACKAGES:+--build-arg OPENCLAW_DOCKER_APT_PACKAGES="$OPENCLAW_DOCKER_APT_PACKAGES"} \
+  -t openclaw:local .
+
+# ── 6. Restore patched files (keep git working tree clean) ───────────
 git checkout -- Dockerfile extensions/ src/infra/diagnostic-events.ts 2>/dev/null || true
 
 echo "[build] Done. Run: docker compose up -d openclaw-gateway"

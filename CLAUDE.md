@@ -29,7 +29,13 @@ All deployment steps are in modular playbooks under `playbooks/`:
 | `99-new-feature-planning.md` | Process for planning new features | - | - |
 | `99-new-feature-implementation.md` | Process for implementing planned features | - | - |
 
-Optional features are in `playbooks/extras/`. See `extras/README.md` for details.
+Optional features are in `playbooks/extras/`:
+
+| Playbook | Description | VPS-1 | VPS-2 |
+|----------|-------------|:-----:|:-----:|
+| `extras/sandbox-and-browser.md` | Rich sandbox, browser, gateway packages, Claude Code CLI | ✓ | - |
+
+See `extras/README.md` for details.
 
 See [playbooks/README.md](playbooks/README.md) for detailed playbook documentation.
 
@@ -170,7 +176,7 @@ Present playbook selection:
 >
 > **Optional features** (from `playbooks/extras/`):
 >
-> - [ ] *(None currently available)*
+> - [ ] Sandbox & Browser (`extras/sandbox-and-browser.md`) — Rich sandbox, browser, gateway packages, Claude Code CLI
 
 #### A3. Confirmation
 
@@ -223,7 +229,7 @@ When user selects "Modify":
 >
 > **Available extras** (from `playbooks/extras/`):
 >
-> - *(None currently available)*
+> - [ ] Sandbox & Browser (`extras/sandbox-and-browser.md`) — Rich sandbox, browser, gateway packages, Claude Code CLI
 >
 > **Other options:**
 >
@@ -427,6 +433,10 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 18. **Trusted proxies:** `gateway.trustedProxies: ["172.30.0.1"]` for Cloudflare Tunnel (cloudflared connects via Docker bridge). Not needed for Caddy (host network). Only exact IPs work (no CIDR).
 19. **Device pairing:** New devices get "pairing required" on first connect. Approve via CLI: `sudo docker exec openclaw-gateway node dist/index.js devices approve <requestId>`. Once one device is paired, approve others from the Control UI.
 20. **Build script:** `scripts/build-openclaw.sh` auto-patches upstream Dockerfile and OTEL source before `docker build`, then restores git tree. Patches auto-skip when upstream fixes land
+21. **Rich sandbox:** `openclaw-sandbox-common:bookworm-slim` includes Node.js, git, and dev tools — used as default sandbox image for agent tasks
+22. **Browser sandbox:** `openclaw-sandbox-browser:bookworm-slim` includes Chromium + noVNC — browser tasks viewable through Control UI, no extra ports needed (proxied through gateway)
+23. **Gateway extras:** `OPENCLAW_DOCKER_APT_PACKAGES` in `.env` passes apt packages as `--build-arg` to Docker build. Claude Code CLI installed globally via Dockerfile patch
+24. **Config permissions:** Entrypoint enforces `chmod 600` on `openclaw.json` every startup — gateway may rewrite with looser permissions on config changes
 
 ---
 

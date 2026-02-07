@@ -4,8 +4,14 @@ This is a summary log of major changes and the plans they implemented.
 
 ---
 
+## PLANNED MODIFICATIONS
+
+- LLM Gateway - proxy full LLM traces (e.g. LiteLLM, Portkey, TensorZero or lightweight Cloudflare Worker + AI Gateway)
+- Improve LLMMetry traces with Traceloop SDK: <https://github.com/traceloop/openllmetry-js>
+
 ## CURRENT STATUS
 
+- OpenClaw Extras - browser container, claude code, npm, ffmpeg etc. sandboxes
 - OTEL metrics, logs, and traces are working & shipping to Grafana (observe) stack
 - OpenClaw is built from Docker using as little patching and overrides as possible
   - OTEL configs are in openclaw.json config - less Dockerfile patching
@@ -16,11 +22,6 @@ This is a summary log of major changes and the plans they implemented.
 - OpenClaw cannot self update - requires rebuilding on host and restarting container
 - All containers use bind mount to allow for easier backup on host (rsync)
 - OTEL is not capturing conversation history, only token metrics and metadata
-
-## PLANNED MODIFICATIONS
-
-- LLM Gateway - proxy full LLM traces (e.g. LiteLLM, Portkey, TensorZero)
-- OpenClaw Extras - browser container, claude code, npm, etc.
 
 ---
 

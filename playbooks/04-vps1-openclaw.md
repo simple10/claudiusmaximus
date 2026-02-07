@@ -156,6 +156,9 @@ OPENCLAW_GATEWAY_BIND=lan
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.0.0.2:4318/v1/traces
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.0.0.2:9090/api/v1/otlp/v1/metrics
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.0.0.2:3100/otlp/v1/logs
+
+# Extra apt packages baked into gateway image at build time (space-separated)
+OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg build-essential imagemagick"
 EOF
 
 sudo chmod 600 /home/openclaw/openclaw/.env
@@ -239,7 +242,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s  # Sandbox image build on first boot takes time
+      start_period: 300s  # Extended: first boot builds 3 sandbox images inside nested Docker
     logging:
       driver: "json-file"
       options:
@@ -397,6 +400,53 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
       "sampleRate": ${OPENCLAW_OTEL_SAMPLERATE:-0.2},
       "flushIntervalMs": ${OPENCLAW_OTEL_FLUSHINTERVAL:-20000}
     }
+  },
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "mode": "non-main",
+        "scope": "agent",
+        "docker": {
+          "image": "openclaw-sandbox-common:bookworm-slim",
+          "containerPrefix": "openclaw-sbx-",
+          "workdir": "/workspace",
+          "readOnlyRoot": true,
+          "tmpfs": ["/tmp", "/var/tmp", "/run"],
+          "network": "none",
+          "user": "1000:1000",
+          "capDrop": ["ALL"],
+          "env": { "LANG": "C.UTF-8" },
+          "pidsLimit": 256,
+          "memory": "1g",
+          "memorySwap": "2g",
+          "cpus": 1
+        },
+        "browser": {
+          "enabled": true,
+          "image": "openclaw-sandbox-browser:bookworm-slim",
+          "containerPrefix": "openclaw-sbx-browser-",
+          "cdpPort": 9222,
+          "vncPort": 5900,
+          "noVncPort": 6080,
+          "headless": false,
+          "enableNoVnc": true,
+          "autoStart": true,
+          "autoStartTimeoutMs": 12000
+        },
+        "prune": {
+          "idleHours": 24,
+          "maxAgeDays": 7
+        }
+      }
+    }
+  },
+  "tools": {
+    "sandbox": {
+      "tools": {
+        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
+        "deny": ["canvas", "nodes", "cron", "discord", "gateway"]
+      }
+    }
   }
 }
 JSONEOF
@@ -433,6 +483,53 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
       "sampleRate": ${OPENCLAW_OTEL_SAMPLERATE:-0.2},
       "flushIntervalMs": ${OPENCLAW_OTEL_FLUSHINTERVAL:-20000}
     }
+  },
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "mode": "non-main",
+        "scope": "agent",
+        "docker": {
+          "image": "openclaw-sandbox-common:bookworm-slim",
+          "containerPrefix": "openclaw-sbx-",
+          "workdir": "/workspace",
+          "readOnlyRoot": true,
+          "tmpfs": ["/tmp", "/var/tmp", "/run"],
+          "network": "none",
+          "user": "1000:1000",
+          "capDrop": ["ALL"],
+          "env": { "LANG": "C.UTF-8" },
+          "pidsLimit": 256,
+          "memory": "1g",
+          "memorySwap": "2g",
+          "cpus": 1
+        },
+        "browser": {
+          "enabled": true,
+          "image": "openclaw-sandbox-browser:bookworm-slim",
+          "containerPrefix": "openclaw-sbx-browser-",
+          "cdpPort": 9222,
+          "vncPort": 5900,
+          "noVncPort": 6080,
+          "headless": false,
+          "enableNoVnc": true,
+          "autoStart": true,
+          "autoStartTimeoutMs": 12000
+        },
+        "prune": {
+          "idleHours": 24,
+          "maxAgeDays": 7
+        }
+      }
+    }
+  },
+  "tools": {
+    "sandbox": {
+      "tools": {
+        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
+        "deny": ["canvas", "nodes", "cron", "discord", "gateway"]
+      }
+    }
   }
 }
 JSONEOF
@@ -449,10 +546,11 @@ sudo chmod 600 /home/openclaw/.openclaw/openclaw.json
 
 Instead of maintaining a forked Dockerfile, we patch the upstream Dockerfile and source in-place before building. Each patch auto-skips when the corresponding upstream issue is fixed.
 
-Three upstream issues require patching:
+Three upstream issues require patching, plus one addition:
 - [#7201](https://github.com/openclaw/openclaw/issues/7201): Dockerfile doesn't copy extension `package.json` before `pnpm install`
 - [#3201](https://github.com/openclaw/openclaw/issues/3201): `diagnostics-otel` uses deprecated `@opentelemetry` v2.x APIs
 - Dual-bundle diagnostic events: `diagnostic-events.ts` is bundled into both the loader chunk and plugin-sdk, creating two separate listener Sets — events emitted by the gateway never reach plugin listeners
+- Claude Code CLI: installs `@anthropic-ai/claude-code` globally so agents can use it as a coding tool
 
 ```bash
 #!/bin/bash
@@ -472,6 +570,7 @@ sudo -u openclaw tee /home/openclaw/scripts/build-openclaw.sh << 'SCRIPTEOF'
 #   3. Diagnostic events: use globalThis for shared listener set (dual-bundle fix)
 #      The diagnostic-events.ts module is bundled into both loader chunk and plugin-sdk,
 #      creating two separate listener Sets. Using globalThis ensures they share one Set.
+#   4. Dockerfile: install Claude Code CLI globally (@anthropic-ai/claude-code)
 #
 # Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 set -euo pipefail
@@ -548,11 +647,22 @@ else
   echo "[build] Diagnostic events patch not needed (upstream fixed or already patched)"
 fi
 
-# ── 4. Build image ───────────────────────────────────────────────────
-echo "[build] Building openclaw:local..."
-docker build -t openclaw:local .
+# ── 4. Patch Dockerfile to install Claude Code CLI ────────────────────
+if ! grep -q "@anthropic-ai/claude-code" Dockerfile; then
+  echo "[build] Patching Dockerfile to install Claude Code CLI..."
+  # Insert before USER (not CMD) so npm install runs as root
+  sed -i '/^USER /i RUN npm install -g @anthropic-ai/claude-code' Dockerfile
+else
+  echo "[build] Claude Code CLI already in Dockerfile (already patched)"
+fi
 
-# ── 5. Restore patched files (keep git working tree clean) ───────────
+# ── 5. Build image ───────────────────────────────────────────────────
+echo "[build] Building openclaw:local..."
+docker build \
+  ${OPENCLAW_DOCKER_APT_PACKAGES:+--build-arg OPENCLAW_DOCKER_APT_PACKAGES="$OPENCLAW_DOCKER_APT_PACKAGES"} \
+  -t openclaw:local .
+
+# ── 6. Restore patched files (keep git working tree clean) ───────────
 git checkout -- Dockerfile extensions/ src/infra/diagnostic-events.ts 2>/dev/null || true
 
 echo "[build] Done. Run: docker compose up -d openclaw-gateway"
@@ -565,13 +675,16 @@ sudo chmod +x /home/openclaw/scripts/build-openclaw.sh
 
 ## 4.8b Build-Time Patches (Reference)
 
-The build script (4.8a) applies three patches inline using `sed` and `python3`. Each auto-skips when upstream fixes the issue:
+The build script (4.8a) applies four patches inline using `sed` and `python3`. Each auto-skips when upstream fixes the issue:
 
 1. **Dockerfile extension deps** (upstream #7201): Copies `extensions/diagnostics-otel/package.json` before `pnpm install`
 2. **OTEL v2.x API compat** (upstream #3201):
    - `@opentelemetry/resources` v2.x: `new Resource()` → `resourceFromAttributes()`
    - `@opentelemetry/sdk-logs` v0.211+: `addLogRecordProcessor()` removed → pass `logRecordProcessors` in constructor
 3. **Diagnostic events dual-bundle fix**: `src/infra/diagnostic-events.ts` is bundled into both the gateway loader chunk and the plugin-sdk, creating two separate `listeners` Sets. Gateway events never reach plugin listeners. Fix: use `globalThis.__OPENCLAW_DIAG_LISTENERS__` so both bundles share one Set. Without this patch, OTEL traces and metrics don't work (logs work because they use a different code path).
+4. **Claude Code CLI**: Installs `@anthropic-ai/claude-code` globally via `npm install -g` so agents can invoke `claude` as a coding tool.
+
+The build step also passes `OPENCLAW_DOCKER_APT_PACKAGES` as a `--build-arg` when set (upstream Dockerfile has an `ARG` that conditionally installs them).
 
 No separate patch files needed — the build script contains the patches directly.
 
@@ -579,9 +692,10 @@ No separate patch files needed — the build script contains the patches directl
 
 ## 4.8c Create Gateway Entrypoint Script
 
-The entrypoint script runs before the gateway starts. It handles two setup tasks, then passes through to whatever command Docker Compose specifies via `exec "$@"`:
+The entrypoint script runs before the gateway starts. It handles several setup tasks, then passes through to whatever command Docker Compose specifies via `exec "$@"`:
 1. **Lock file cleanup** — removes stale `gateway.*.lock` files left by unclean shutdowns
-2. **Sandbox image bootstrap** — waits for the sysbox nested Docker daemon, then builds sandbox images if missing
+2. **Config permissions fix** — ensures `openclaw.json` is `chmod 600` (gateway may rewrite with looser permissions)
+3. **Sandbox image bootstrap** — waits for the sysbox nested Docker daemon, then builds default, common, and browser sandbox images if missing
 
 The full gateway command (`node dist/index.js gateway ...`) is specified in `docker-compose.override.yml`, not hardcoded here. This makes the entrypoint agnostic to the gateway command format.
 
@@ -597,7 +711,7 @@ sudo -u openclaw tee /home/openclaw/openclaw/scripts/entrypoint-gateway.sh << 'S
 #!/bin/bash
 set -euo pipefail
 
-# ── 1. Clean stale lock files ─────────────────────────────────────────
+# ── 1a. Clean stale lock files ────────────────────────────────────────
 # Unclean shutdowns can leave lock files that prevent the gateway from starting
 lock_dir="/home/node/.openclaw"
 if compgen -G "${lock_dir}/gateway.*.lock" > /dev/null 2>&1; then
@@ -607,6 +721,17 @@ if compgen -G "${lock_dir}/gateway.*.lock" > /dev/null 2>&1; then
   echo "[entrypoint] Lock files cleaned"
 else
   echo "[entrypoint] No stale lock files found"
+fi
+
+# ── 1b. Fix openclaw.json permissions (security audit CRITICAL) ───────
+# The gateway may rewrite this file with looser permissions on config changes
+config_file="/home/node/.openclaw/openclaw.json"
+if [ -f "$config_file" ]; then
+  current_perms=$(stat -c '%a' "$config_file" 2>/dev/null || stat -f '%Lp' "$config_file" 2>/dev/null)
+  if [ "$current_perms" != "600" ]; then
+    chmod 600 "$config_file"
+    echo "[entrypoint] Fixed openclaw.json permissions: ${current_perms} -> 600"
+  fi
 fi
 
 # ── 2. Wait for nested Docker daemon and bootstrap sandbox images ─────
@@ -627,7 +752,7 @@ done
 if docker info > /dev/null 2>&1; then
   echo "[entrypoint] Nested Docker daemon ready (took ${elapsed}s)"
 
-  # Check if sandbox images exist; build if missing
+  # Build default sandbox image if missing
   if ! docker image inspect openclaw-sandbox > /dev/null 2>&1; then
     echo "[entrypoint] Sandbox image not found, building..."
     if [ -f /app/sandbox/Dockerfile ]; then
@@ -638,6 +763,32 @@ if docker info > /dev/null 2>&1; then
     fi
   else
     echo "[entrypoint] Sandbox image already exists"
+  fi
+
+  # Build common sandbox image if missing (includes Node.js, git, common tools)
+  if ! docker image inspect openclaw-sandbox-common:bookworm-slim > /dev/null 2>&1; then
+    echo "[entrypoint] Common sandbox image not found, building..."
+    if [ -f /app/scripts/sandbox-common-setup.sh ]; then
+      /app/scripts/sandbox-common-setup.sh
+      echo "[entrypoint] Common sandbox image built successfully"
+    else
+      echo "[entrypoint] WARNING: sandbox-common-setup.sh not found, skipping"
+    fi
+  else
+    echo "[entrypoint] Common sandbox image already exists"
+  fi
+
+  # Build browser sandbox image if missing (includes Chromium, noVNC)
+  if ! docker image inspect openclaw-sandbox-browser:bookworm-slim > /dev/null 2>&1; then
+    echo "[entrypoint] Browser sandbox image not found, building..."
+    if [ -f /app/scripts/sandbox-browser-setup.sh ]; then
+      /app/scripts/sandbox-browser-setup.sh
+      echo "[entrypoint] Browser sandbox image built successfully"
+    else
+      echo "[entrypoint] WARNING: sandbox-browser-setup.sh not found, skipping"
+    fi
+  else
+    echo "[entrypoint] Browser sandbox image already exists"
   fi
 fi
 

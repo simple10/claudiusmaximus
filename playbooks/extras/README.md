@@ -21,7 +21,9 @@ Optional features are enhancements that:
 
 ## Available Optional Features
 
-*No optional features yet. Features will be added here as they're created.*
+| Feature | Playbook | Description |
+|---------|----------|-------------|
+| Sandbox & Browser | [`sandbox-and-browser.md`](sandbox-and-browser.md) | Rich sandbox (Node.js, git, dev tools), browser (Chromium + noVNC), gateway apt packages (ffmpeg, imagemagick), Claude Code CLI |
 
 ## Adding Optional Features
 

@@ -1,5 +1,7 @@
 # OpenClaw Webchat Limitations
 
+See [](../plans/3_consideration/sandbox-media-sharing.md)
+
 Files captured in sandboxes (e.g. the browser sandbox) cannot be rendered or downloaded via webchat.
 
 This is more of webchat UI bug than anything else.

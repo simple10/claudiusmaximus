@@ -18,7 +18,8 @@
       "Bash(ls:*)",
       "Bash(npx tsc:*)",
       "Bash(npx tsx:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "WebFetch(domain:docs.openclaw.ai)"
     ]
   }
 }

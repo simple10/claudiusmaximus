@@ -1,3 +1,15 @@
+# BRANCH INFO
+
+This feature branch is an ongoing experiment to get openclaw-gateway to run in a container without being
+severely limited.
+
+OpenClaw cannot self update due to missing .git/ dir in the container.
+
+But the main issue is the amount of deviation from upstream that's likely to break future updates.
+
+OpenClaw recommends using the docker-setup.sh script but we're using custom docker compose overrides
+instead.
+
 # OpenClaw on VPS
 
 This repository contains everything needed to "securely" deploy OpenClaw on two VPS instances with full observability.

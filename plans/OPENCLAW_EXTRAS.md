@@ -9,6 +9,7 @@ The current OpenClaw gateway on VPS-1 runs with a minimal sandbox image (`opencl
 1. **Browser sandbox** — Chromium + noVNC for web browsing tasks, viewable through the Control UI
 2. **Common sandbox image** — Pre-built image with Node.js, git, and dev tools (replaces the minimal default)
 3. **Gateway apt packages** — `ffmpeg`, `build-essential`, and `imagemagick` baked into the gateway Docker image at build time
+4. **Claude Code CLI** — `@anthropic-ai/claude-code` installed globally in the gateway image so agents can use it as a coding tool
 
 ## Files to Modify
 
@@ -29,6 +30,20 @@ docker build \
 ```
 
 The upstream Dockerfile already has an `ARG OPENCLAW_DOCKER_APT_PACKAGES` and conditional install. This just passes it through.
+
+Also add a new patch (patch 3) to install Claude Code globally. Insert `RUN npm install -g @anthropic-ai/claude-code` into the Dockerfile before the final `CMD` instruction, following the same auto-skip pattern as existing patches:
+
+```bash
+# ── 3. Patch Dockerfile to install Claude Code CLI ────────────────────
+if ! grep -q "@anthropic-ai/claude-code" Dockerfile; then
+  echo "[build] Patching Dockerfile to install Claude Code CLI..."
+  sed -i '/^CMD /i RUN npm install -g @anthropic-ai/claude-code' Dockerfile
+else
+  echo "[build] Claude Code CLI already in Dockerfile (already patched)"
+fi
+```
+
+This installs Claude Code as a global npm package in the gateway image. The `claude` binary will be available on PATH for agents to invoke.
 
 ### 2. `playbooks/04-vps1-openclaw.md` — Update 4 sections
 
@@ -158,7 +173,8 @@ Browser sandboxes run inside the Sysbox nested Docker daemon. The gateway proxie
 - `openclaw-sandbox-common` ~500MB (inside nested Docker)
 - `openclaw-sandbox-browser` ~800MB (inside nested Docker)
 - `ffmpeg` + `build-essential` + `imagemagick` ~350MB (in gateway image)
-- **Total: ~1.65GB additional** — check `df -h` on VPS-1 before proceeding
+- Claude Code CLI ~100MB (npm global install in gateway image)
+- **Total: ~1.75GB additional** — check `df -h` on VPS-1 before proceeding
 
 ## Implementation Order
 
@@ -179,3 +195,4 @@ Browser sandboxes run inside the Sysbox nested Docker daemon. The gateway proxie
 4. Send a web browsing task — verify browser launches, noVNC accessible via Control UI
 5. `sudo docker exec openclaw-gateway which ffmpeg` — confirm gateway apt packages installed
 6. `sudo docker exec openclaw-gateway which convert` — confirm imagemagick installed
+7. `sudo docker exec openclaw-gateway claude --version` — confirm Claude Code CLI installed

@@ -421,11 +421,12 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 12. **Tempo OTLP:** Binds to WireGuard IP (10.0.0.2:4318) for trace ingestion
 13. **OpenClaw OTEL:** All signals enabled — traces→Tempo, metrics→Prometheus, logs→Loki
 14. **Bind mounts only:** Never use Docker named volumes — use bind mounts (`./data/<service>:/path`) so `rsync` can back up everything from the host
-15. **Entrypoint script:** Gateway uses bind-mounted entrypoint that cleans lock files and bootstraps sandbox images before starting
+15. **Entrypoint script:** Gateway uses bind-mounted entrypoint that cleans lock files, bootstraps sandbox images, then runs `exec "$@"` (full command comes from compose override)
 16. **Self-restart:** `commands.restart: true` enables agents to modify config and trigger in-process restart via SIGUSR1
 17. **UI subpaths:** Configure `SUBPATH_OPENCLAW` and `SUBPATH_GRAFANA` in openclaw-config.env; gateway uses `controlUi.basePath`, Grafana uses `GF_SERVER_SERVE_FROM_SUB_PATH`; Caddy must use `handle` (not `handle_path`) to preserve the prefix
 18. **Trusted proxies:** `gateway.trustedProxies: ["172.30.0.1"]` for Cloudflare Tunnel (cloudflared connects via Docker bridge). Not needed for Caddy (host network). Only exact IPs work (no CIDR).
 19. **Device pairing:** New devices get "pairing required" on first connect. Approve via CLI: `sudo docker exec openclaw-gateway node dist/index.js devices approve <requestId>`. Once one device is paired, approve others from the Control UI.
+20. **Build script:** `scripts/build-openclaw.sh` auto-patches upstream Dockerfile and OTEL source before `docker build`, then restores git tree. Patches auto-skip when upstream fixes land
 
 ---
 

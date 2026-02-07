@@ -6,6 +6,9 @@
 #   2. OTEL extension: fix @opentelemetry v2.x API changes (upstream #3201)
 #      a. Resource -> resourceFromAttributes (@opentelemetry/resources v2.x)
 #      b. LoggerProvider constructor-based processors (@opentelemetry/sdk-logs v0.211+)
+#   3. Diagnostic events: use globalThis for shared listener set (dual-bundle fix)
+#      The diagnostic-events.ts module is bundled into both loader chunk and plugin-sdk,
+#      creating two separate listener Sets. Using globalThis ensures they share one Set.
 #
 # Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 set -euo pipefail
@@ -73,11 +76,20 @@ else
   echo "[build] OTEL LoggerProvider patch not needed (upstream fixed or already patched)"
 fi
 
-# ── 3. Build image ───────────────────────────────────────────────────
+# ── 3. Patch diagnostic events for shared listener Set (dual-bundle fix) ──
+DIAG_EVENTS="src/infra/diagnostic-events.ts"
+if grep -q "^const listeners = new Set" "$DIAG_EVENTS" 2>/dev/null; then
+  echo "[build] Patching diagnostic-events.ts for shared globalThis listener Set..."
+  sed -i 's/^const listeners = new Set<(evt: DiagnosticEventPayload) => void>();/const listeners = ((globalThis as any).__OPENCLAW_DIAG_LISTENERS__ ??= new Set<(evt: DiagnosticEventPayload) => void>()) as Set<(evt: DiagnosticEventPayload) => void>;/' "$DIAG_EVENTS"
+else
+  echo "[build] Diagnostic events patch not needed (upstream fixed or already patched)"
+fi
+
+# ── 4. Build image ───────────────────────────────────────────────────
 echo "[build] Building openclaw:local..."
 docker build -t openclaw:local .
 
-# ── 4. Restore patched files (keep git working tree clean) ───────────
-git checkout -- Dockerfile extensions/ 2>/dev/null || true
+# ── 5. Restore patched files (keep git working tree clean) ───────────
+git checkout -- Dockerfile extensions/ src/infra/diagnostic-events.ts 2>/dev/null || true
 
 echo "[build] Done. Run: docker compose up -d openclaw-gateway"

@@ -1,19 +1,29 @@
-# OTEL v2.x API Compatibility Patch (upstream #3201)
+# Build-Time Patches for OpenClaw
 #
 # This file documents the patches applied by scripts/build-openclaw.sh.
 # The build script applies these changes inline (sed + python3) rather than
 # using `patch` because the upstream file changes frequently and unified diffs
 # with fixed line numbers are fragile.
 #
-# Patch 1: @opentelemetry/resources v2.x removed the Resource class
+# Patch 1: Dockerfile - extension deps not installed (upstream #7201)
+#   Inserts COPY for extensions/diagnostics-otel/package.json before pnpm install.
+#
+# Patch 2a: @opentelemetry/resources v2.x removed the Resource class (upstream #3201)
 #   - import { Resource } from "@opentelemetry/resources"
 #   + import { resourceFromAttributes } from "@opentelemetry/resources"
 #   - const resource = new Resource({
 #   + const resource = resourceFromAttributes({
 #
-# Patch 2: @opentelemetry/sdk-logs v0.211+ removed addLogRecordProcessor()
+# Patch 2b: @opentelemetry/sdk-logs v0.211+ removed addLogRecordProcessor() (upstream #3201)
 #   - logProvider = new LoggerProvider({ resource });
 #   - logProvider.addLogRecordProcessor(new BatchLogRecordProcessor(...));
 #   + logProvider = new LoggerProvider({ resource, logRecordProcessors: [...] });
 #
-# Both patches auto-skip when upstream fixes #3201.
+# Patch 3: Diagnostic events dual-bundle fix
+#   diagnostic-events.ts is bundled into both the loader chunk and plugin-sdk,
+#   creating two separate listener Sets. Events emitted by the gateway never
+#   reach plugin listeners. Fix: use globalThis to share a single Set.
+#   - const listeners = new Set<(evt: DiagnosticEventPayload) => void>();
+#   + const listeners = ((globalThis as any).__OPENCLAW_DIAG_LISTENERS__ ??= new Set<...>()) as Set<...>;
+#
+# All patches auto-skip when upstream fixes the corresponding issue.

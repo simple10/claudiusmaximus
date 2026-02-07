@@ -1,9 +1,31 @@
 # OpenTelemetry Traces Not Exporting - Investigation Findings
 
-**Date:** 2026-02-07
+**Date:** 2026-02-06
 **Status:** Root cause identified - requires upstream fix
 
-## Summary
+## Update 2026-02-06
+
+OTEL was successfully implemented after hours of trial and error patching.
+However, the traces (Tempo) are being captured by OTEL do not include message history by design.
+
+If trace logs are enabled, the conversation history is captured in Loki.
+
+With the data currently being captured, there's no way in Grafana to replicate
+at LiteLLM style conversation trace.
+
+```text
+openclaw.message.processed — channel, outcome, sessionKey, sessionId, chatId, messageId, duration
+
+openclaw.model.usage — channel, provider, model, sessionKey, sessionId, token counts
+(input/output/cache_read/cache_write/total), duration
+
+Metrics (counters/histograms, not traces) — token usage, cost (USD), run duration, context window usage, queue depth/wait,
+webhook counts, session state transitions
+```
+
+---
+
+## Previous Summary Analysis
 
 OpenClaw's `diagnostics-otel` plugin successfully exports **logs** and **metrics** to their respective backends (Loki and Prometheus), but **trace spans are not being exported** to Tempo. Traces reach Tempo but are empty (`inspected_spans=0`).
 
@@ -31,6 +53,7 @@ OpenClaw's `diagnostics-otel` plugin successfully exports **logs** and **metrics
 **Trace spans are not exported to Tempo.**
 
 Evidence:
+
 - Tempo logs show: `inspected_traces=1 inspected_spans=0`
 - Traces reach Tempo (confirmed via API and logs)
 - Traces are empty - contain no span data
@@ -90,11 +113,13 @@ span.end();
 ## Investigation Timeline
 
 ### Initial Hypothesis
+
 Suspected missing API key or incorrect endpoint configuration.
 
 **Result:** API key was configured, endpoint configuration was correct (after adding `diagnostics.otel.endpoint`).
 
 ### Network Connectivity Tests
+
 - ✅ Verified WireGuard tunnel: `ping 10.0.0.2` succeeds
 - ✅ Verified OTLP endpoint: `curl http://10.0.0.2:4318/` returns 404 (expected)
 - ✅ Verified Tempo receives OTLP: Manual trace POST accepted with 200 OK
@@ -102,6 +127,7 @@ Suspected missing API key or incorrect endpoint configuration.
 ### Configuration Fixes Applied
 
 1. **Added base endpoint to config** (per OpenClaw's suggestion):
+
    ```json
    {
      "diagnostics": {
@@ -124,6 +150,7 @@ Suspected missing API key or incorrect endpoint configuration.
    - Reason: Config endpoint now used, SDK appends `/v1/traces`, `/v1/metrics`, `/v1/logs`
 
 3. **Runtime patch applied** to check per-signal env var:
+
    ```typescript
    // Line 80 of patches-runtime/diagnostics-otel-service.ts
    const traceUrl = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
@@ -133,6 +160,7 @@ Suspected missing API key or incorrect endpoint configuration.
 ### Attempted Fixes (Did Not Resolve Issue)
 
 1. **Explicit BatchSpanProcessor creation**:
+
    ```typescript
    const spanProcessor = new BatchSpanProcessor(
      traceExporter,
@@ -144,6 +172,7 @@ Suspected missing API key or incorrect endpoint configuration.
      // ...
    });
    ```
+
    **Result:** Plugin failed to load due to missing `@opentelemetry/sdk-trace-node` package.
 
 2. **Switched to BasicTracerProvider**:
@@ -187,9 +216,11 @@ The `diagnostics-otel` plugin needs refactoring in the upstream OpenClaw reposit
 The `diagnostics-otel` plugin successfully exports logs and metrics, but trace spans are not being exported. Traces reach the OTLP backend (confirmed via Tempo logs: `inspected_traces=1 inspected_spans=0`) but are empty.
 
 **Environment:**
+
 - OpenClaw version: `2026.2.4`
 - OTEL exports: Logs ✅ Metrics ✅ Traces ❌
 - Configuration:
+
   ```json
   {
     "diagnostics": {
@@ -215,6 +246,7 @@ The plugin uses `NodeSDK` with a `traceExporter`, but manual spans created via `
 Create a `BasicTracerProvider` directly with `addSpanProcessor()`, then call `tracerProvider.register()` to set it as the global provider. This ensures manually created spans are captured by the span processor.
 
 Example:
+
 ```typescript
 const tracerProvider = new BasicTracerProvider({ resource, sampler });
 tracerProvider.addSpanProcessor(
@@ -226,6 +258,7 @@ tracerProvider.register();
 ### Alternative: Check Upstream for Existing Issues
 
 Before filing, search the OpenClaw repository for existing issues related to:
+
 - "diagnostics-otel traces"
 - "OTLP trace export"
 - "BatchSpanProcessor"
@@ -234,33 +267,41 @@ Before filing, search the OpenClaw repository for existing issues related to:
 ## Workarounds
 
 ### Option 1: Wait for Upstream Fix
+
 Monitor OpenClaw releases for fixes to the `diagnostics-otel` plugin.
 
 ### Option 2: Fork and Patch Upstream
+
 Fork the OpenClaw repository, apply the TracerProvider fix in `extensions/diagnostics-otel/src/service.ts`, and build a custom image.
 
 **Pros:**
+
 - Full control over the fix
 - Proper TypeScript compilation
 - Can run tests
 
 **Cons:**
+
 - Must maintain fork
 - Must rebuild on upstream updates
 - More complex deployment
 
 ### Option 3: Live Without Traces (Current State)
+
 Continue using logs and metrics for observability. Diagnostic logs provide sufficient detail for most troubleshooting:
+
 - Model usage logged: tokens, cost, duration
 - Message processing logged: outcome, duration
 - Session state transitions logged
 - Queue depth and wait times logged
 
 **Pros:**
+
 - No additional work required
 - Logs + metrics cover most use cases
 
 **Cons:**
+
 - No distributed tracing visualization
 - Can't trace request flows across services
 - Missing trace-to-logs correlation in Grafana
@@ -287,12 +328,14 @@ Continue using logs and metrics for observability. Diagnostic logs provide suffi
 
 2. **`patches-runtime/diagnostics-otel-service.ts`**
    - Line 80: Check per-signal env var first:
+
      ```typescript
      const traceUrl = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
                       resolveOtelUrl(endpoint, "v1/traces");
      ```
 
 3. **Container config: `/home/node/.openclaw/openclaw.json`**
+
    ```json
    {
      "diagnostics": {
@@ -327,7 +370,7 @@ Continue using logs and metrics for observability. Diagnostic logs provide suffi
 
 ## References
 
-- OpenTelemetry JS SDK: https://github.com/open-telemetry/opentelemetry-js
-- NodeSDK vs Manual Instrumentation: https://opentelemetry.io/docs/instrumentation/js/manual/
-- BatchSpanProcessor configuration: https://opentelemetry.io/docs/reference/specification/trace/sdk/#batching-processor
-- Tempo OTLP ingestion: https://grafana.com/docs/tempo/latest/api_docs/#otlp
+- OpenTelemetry JS SDK: <https://github.com/open-telemetry/opentelemetry-js>
+- NodeSDK vs Manual Instrumentation: <https://opentelemetry.io/docs/instrumentation/js/manual/>
+- BatchSpanProcessor configuration: <https://opentelemetry.io/docs/reference/specification/trace/sdk/#batching-processor>
+- Tempo OTLP ingestion: <https://grafana.com/docs/tempo/latest/api_docs/#otlp>

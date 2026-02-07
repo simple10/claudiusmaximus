@@ -227,10 +227,11 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TZ=UTC
-      # OTEL per-signal routing (no shared endpoint - each signal goes to its backend)
-      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}
-      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=${OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}
-      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=${OTEL_EXPORTER_OTLP_LOGS_ENDPOINT}
+      # OTEL per-signal routing: each signal goes to its own backend
+      # Do NOT set endpoint in openclaw.json — these env vars are only picked up when no explicit url is passed
+      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.0.0.2:4318/v1/traces
+      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.0.0.2:9090/api/v1/otlp/v1/metrics
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.0.0.2:3100/otlp/v1/logs
     networks:
       - openclaw-gateway-net
     healthcheck:
@@ -448,9 +449,10 @@ sudo chmod 600 /home/openclaw/.openclaw/openclaw.json
 
 Instead of maintaining a forked Dockerfile, we patch the upstream Dockerfile and source in-place before building. Each patch auto-skips when the corresponding upstream issue is fixed.
 
-Two upstream issues require patching:
+Three upstream issues require patching:
 - [#7201](https://github.com/openclaw/openclaw/issues/7201): Dockerfile doesn't copy extension `package.json` before `pnpm install`
 - [#3201](https://github.com/openclaw/openclaw/issues/3201): `diagnostics-otel` uses deprecated `@opentelemetry` v2.x APIs
+- Dual-bundle diagnostic events: `diagnostic-events.ts` is bundled into both the loader chunk and plugin-sdk, creating two separate listener Sets — events emitted by the gateway never reach plugin listeners
 
 ```bash
 #!/bin/bash
@@ -467,6 +469,9 @@ sudo -u openclaw tee /home/openclaw/scripts/build-openclaw.sh << 'SCRIPTEOF'
 #   2. OTEL extension: fix @opentelemetry v2.x API changes (upstream #3201)
 #      a. Resource -> resourceFromAttributes (@opentelemetry/resources v2.x)
 #      b. LoggerProvider constructor-based processors (@opentelemetry/sdk-logs v0.211+)
+#   3. Diagnostic events: use globalThis for shared listener set (dual-bundle fix)
+#      The diagnostic-events.ts module is bundled into both loader chunk and plugin-sdk,
+#      creating two separate listener Sets. Using globalThis ensures they share one Set.
 #
 # Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 set -euo pipefail
@@ -534,12 +539,21 @@ else
   echo "[build] OTEL LoggerProvider patch not needed (upstream fixed or already patched)"
 fi
 
-# ── 3. Build image ───────────────────────────────────────────────────
+# ── 3. Patch diagnostic events for shared listener Set (dual-bundle fix) ──
+DIAG_EVENTS="src/infra/diagnostic-events.ts"
+if grep -q "^const listeners = new Set" "$DIAG_EVENTS" 2>/dev/null; then
+  echo "[build] Patching diagnostic-events.ts for shared globalThis listener Set..."
+  sed -i 's/^const listeners = new Set<(evt: DiagnosticEventPayload) => void>();/const listeners = ((globalThis as any).__OPENCLAW_DIAG_LISTENERS__ ??= new Set<(evt: DiagnosticEventPayload) => void>()) as Set<(evt: DiagnosticEventPayload) => void>;/' "$DIAG_EVENTS"
+else
+  echo "[build] Diagnostic events patch not needed (upstream fixed or already patched)"
+fi
+
+# ── 4. Build image ───────────────────────────────────────────────────
 echo "[build] Building openclaw:local..."
 docker build -t openclaw:local .
 
-# ── 4. Restore patched files (keep git working tree clean) ───────────
-git checkout -- Dockerfile extensions/ 2>/dev/null || true
+# ── 5. Restore patched files (keep git working tree clean) ───────────
+git checkout -- Dockerfile extensions/ src/infra/diagnostic-events.ts 2>/dev/null || true
 
 echo "[build] Done. Run: docker compose up -d openclaw-gateway"
 SCRIPTEOF
@@ -549,13 +563,17 @@ sudo chmod +x /home/openclaw/scripts/build-openclaw.sh
 
 ---
 
-## 4.8b OTEL v2.x Compatibility Patches (Reference)
+## 4.8b Build-Time Patches (Reference)
 
-The upstream `diagnostics-otel` extension needs two fixes for `@opentelemetry` v2.x:
-1. `@opentelemetry/resources` v2.x: `new Resource()` → `resourceFromAttributes()`
-2. `@opentelemetry/sdk-logs` v0.211+: `LoggerProvider.addLogRecordProcessor()` removed → pass `logRecordProcessors` in constructor
+The build script (4.8a) applies three patches inline using `sed` and `python3`. Each auto-skips when upstream fixes the issue:
 
-These patches are applied inline by the build script (4.8a) using `sed` and `python3`. No separate patch file is needed — the build script contains the patches directly and auto-skips each when upstream fixes the issue.
+1. **Dockerfile extension deps** (upstream #7201): Copies `extensions/diagnostics-otel/package.json` before `pnpm install`
+2. **OTEL v2.x API compat** (upstream #3201):
+   - `@opentelemetry/resources` v2.x: `new Resource()` → `resourceFromAttributes()`
+   - `@opentelemetry/sdk-logs` v0.211+: `addLogRecordProcessor()` removed → pass `logRecordProcessors` in constructor
+3. **Diagnostic events dual-bundle fix**: `src/infra/diagnostic-events.ts` is bundled into both the gateway loader chunk and the plugin-sdk, creating two separate `listeners` Sets. Gateway events never reach plugin listeners. Fix: use `globalThis.__OPENCLAW_DIAG_LISTENERS__` so both bundles share one Set. Without this patch, OTEL traces and metrics don't work (logs work because they use a different code path).
+
+No separate patch files needed — the build script contains the patches directly.
 
 ---
 

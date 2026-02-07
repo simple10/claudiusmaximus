@@ -23,9 +23,13 @@ export function proxyAnthropic(
   const url = `https://gateway.ai.cloudflare.com/v1/${env.ACCOUNT_ID}/${env.GATEWAY_ID}/${gwPath}`;
 
   const headers = new Headers(request.headers);
-  // Remove bearer auth, use Anthropic's x-api-key header instead
+  // Remove client auth headers before forwarding to upstream
   headers.delete("Authorization");
+  headers.delete("x-api-key");
+  // Set the real Anthropic API key for upstream
   headers.set("x-api-key", env.ANTHROPIC_API_KEY);
+  // Authenticate to Cloudflare AI Gateway
+  headers.set("cf-aig-authorization", `Bearer ${env.CF_AI_GATEWAY_TOKEN}`);
 
   // Ensure anthropic-version is set
   if (!headers.has("anthropic-version")) {

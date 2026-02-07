@@ -30,6 +30,8 @@ export function proxyOpenAI(
   const headers = new Headers(request.headers);
   // Replace auth token with OpenAI API key
   headers.set("Authorization", `Bearer ${env.OPENAI_API_KEY}`);
+  // Authenticate to Cloudflare AI Gateway
+  headers.set("cf-aig-authorization", `Bearer ${env.CF_AI_GATEWAY_TOKEN}`);
 
   return fetch(url, {
     method: request.method,

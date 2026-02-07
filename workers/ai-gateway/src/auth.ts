@@ -6,16 +6,27 @@ export async function validateAuth(
   request: Request,
   expectedToken: string
 ): Promise<string | null> {
-  const header = request.headers.get("Authorization");
-  if (!header) {
-    return "Missing Authorization header";
+  // Accept either "Authorization: Bearer <token>" (OpenAI-style)
+  // or "x-api-key: <token>" (Anthropic-style)
+  let provided: string | undefined;
+
+  const authHeader = request.headers.get("Authorization");
+  if (authHeader) {
+    if (!authHeader.startsWith("Bearer ")) {
+      return "Authorization header must use Bearer scheme";
+    }
+    provided = authHeader.slice(7);
+  } else {
+    const apiKey = request.headers.get("x-api-key");
+    if (apiKey) {
+      provided = apiKey;
+    }
   }
 
-  if (!header.startsWith("Bearer ")) {
-    return "Authorization header must use Bearer scheme";
+  if (!provided) {
+    return "Missing auth credentials (expected Authorization: Bearer or x-api-key header)";
   }
 
-  const provided = header.slice(7);
   const match = await timingSafeEqual(provided, expectedToken);
   if (!match) {
     return "Invalid token";

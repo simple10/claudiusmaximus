@@ -7,4 +7,5 @@ export interface Env {
   AUTH_TOKEN: string;
   OPENAI_API_KEY: string;
   ANTHROPIC_API_KEY: string;
+  CF_AI_GATEWAY_TOKEN: string;
 }

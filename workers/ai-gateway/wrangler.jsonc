@@ -4,11 +4,12 @@
   "compatibility_date": "2026-02-06",
   "vars": {
     // Set these to your Cloudflare account and AI Gateway IDs
-    "ACCOUNT_ID": "YOUR_ACCOUNT_ID",
-    "GATEWAY_ID": "YOUR_GATEWAY_ID"
+    "GATEWAY_ID": "ai-gateway"
     // Secrets (set via `wrangler secret put`):
+    //   "ACCOUNT_ID": "YOUR_ACCOUNT_ID",
     //   AUTH_TOKEN       — token clients use to authenticate to this worker
     //   OPENAI_API_KEY   — forwarded to OpenAI via AI Gateway
     //   ANTHROPIC_API_KEY — forwarded to Anthropic via AI Gateway
+    //   CF_AI_GATEWAY_TOKEN — authenticates requests to Cloudflare AI Gateway
   }
 }

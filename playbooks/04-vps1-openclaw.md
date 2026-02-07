@@ -188,15 +188,20 @@ services:
     container_name: openclaw-gateway
     runtime: sysbox-runc
 
-    # Security hardening: read-only root filesystem with tmpfs for writable dirs
-    read_only: true
+    # read_only: false required for Docker-in-Docker — Sysbox auto-provisions
+    # /var/lib/docker and /var/lib/containerd as writable mounts, but they inherit
+    # the read_only flag. Sysbox user namespace isolation provides equivalent security.
+    read_only: false
     tmpfs:
-      - /tmp:size=500M,mode=1777
+      - /tmp:size=1G,mode=1777
       - /var/tmp:size=200M,mode=1777
       - /run:size=100M,mode=755
+      - /var/log:size=100M,mode=755
 
-    # Run as non-root user (node user in container is uid 1000)
-    user: "1000:1000"
+    # Run as root inside container so entrypoint can start dockerd
+    # Sysbox maps root (uid 0) to unprivileged user on host via user namespace
+    # Entrypoint drops to node user via gosu before starting gateway
+    user: "0:0"
 
     deploy:
       resources:
@@ -207,7 +212,7 @@ services:
           cpus: "1"
           memory: 2G
     volumes:
-      # Entrypoint script: lock cleanup, sandbox bootstrap, then exec "$@" (from 4.8c)
+      # Entrypoint script: lock cleanup, start dockerd, sandbox bootstrap, gosu drop to node (from 4.8c)
       - ./scripts/entrypoint-gateway.sh:/app/scripts/entrypoint-gateway.sh:ro
     # Entrypoint handles pre-start tasks before exec-ing the command
     entrypoint: ["/app/scripts/entrypoint-gateway.sh"]
@@ -404,7 +409,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
   "agents": {
     "defaults": {
       "sandbox": {
-        "mode": "non-main",
+        "mode": "all",
         "scope": "agent",
         "docker": {
           "image": "openclaw-sandbox-common:bookworm-slim",
@@ -412,7 +417,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
           "workdir": "/workspace",
           "readOnlyRoot": true,
           "tmpfs": ["/tmp", "/var/tmp", "/run"],
-          "network": "none",
+          "network": "bridge",
           "user": "1000:1000",
           "capDrop": ["ALL"],
           "env": { "LANG": "C.UTF-8" },
@@ -443,7 +448,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
   "tools": {
     "sandbox": {
       "tools": {
-        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
+        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "browser", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
         "deny": ["canvas", "nodes", "cron", "discord", "gateway"]
       }
     }
@@ -487,7 +492,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
   "agents": {
     "defaults": {
       "sandbox": {
-        "mode": "non-main",
+        "mode": "all",
         "scope": "agent",
         "docker": {
           "image": "openclaw-sandbox-common:bookworm-slim",
@@ -495,7 +500,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
           "workdir": "/workspace",
           "readOnlyRoot": true,
           "tmpfs": ["/tmp", "/var/tmp", "/run"],
-          "network": "none",
+          "network": "bridge",
           "user": "1000:1000",
           "capDrop": ["ALL"],
           "env": { "LANG": "C.UTF-8" },
@@ -526,7 +531,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
   "tools": {
     "sandbox": {
       "tools": {
-        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
+        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "browser", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
         "deny": ["canvas", "nodes", "cron", "discord", "gateway"]
       }
     }
@@ -546,11 +551,12 @@ sudo chmod 600 /home/openclaw/.openclaw/openclaw.json
 
 Instead of maintaining a forked Dockerfile, we patch the upstream Dockerfile and source in-place before building. Each patch auto-skips when the corresponding upstream issue is fixed.
 
-Three upstream issues require patching, plus one addition:
+Three upstream issues require patching, plus two additions:
 - [#7201](https://github.com/openclaw/openclaw/issues/7201): Dockerfile doesn't copy extension `package.json` before `pnpm install`
 - [#3201](https://github.com/openclaw/openclaw/issues/3201): `diagnostics-otel` uses deprecated `@opentelemetry` v2.x APIs
 - Dual-bundle diagnostic events: `diagnostic-events.ts` is bundled into both the loader chunk and plugin-sdk, creating two separate listener Sets — events emitted by the gateway never reach plugin listeners
 - Claude Code CLI: installs `@anthropic-ai/claude-code` globally so agents can use it as a coding tool
+- Docker + gosu: installs `docker.io` and `gosu` for nested Docker (sandbox isolation via Sysbox)
 
 ```bash
 #!/bin/bash
@@ -571,6 +577,7 @@ sudo -u openclaw tee /home/openclaw/scripts/build-openclaw.sh << 'SCRIPTEOF'
 #      The diagnostic-events.ts module is bundled into both loader chunk and plugin-sdk,
 #      creating two separate listener Sets. Using globalThis ensures they share one Set.
 #   4. Dockerfile: install Claude Code CLI globally (@anthropic-ai/claude-code)
+#   5. Dockerfile: install Docker + gosu for nested Docker (sandbox isolation via Sysbox)
 #
 # Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 set -euo pipefail
@@ -656,13 +663,26 @@ else
   echo "[build] Claude Code CLI already in Dockerfile (already patched)"
 fi
 
-# ── 5. Build image ───────────────────────────────────────────────────
+# ── 5. Patch Dockerfile to install Docker + gosu (nested Docker for sandboxes) ──
+# docker.io includes: docker CLI, dockerd, containerd, runc
+# gosu: drop-in replacement for su/sudo that doesn't spawn subshell (proper PID 1 signal handling)
+# usermod: add node user to docker group for socket access after privilege drop
+if ! grep -q "docker.io" Dockerfile; then
+  echo "[build] Patching Dockerfile to install Docker + gosu..."
+  # Insert before USER node so it runs as root
+  # Single line to avoid sed multiline continuation issues in Dockerfile
+  sed -i '/^USER /i RUN apt-get update && apt-get install -y --no-install-recommends docker.io gosu && usermod -aG docker node && rm -rf /var/lib/apt/lists/*' Dockerfile
+else
+  echo "[build] Docker already in Dockerfile (already patched)"
+fi
+
+# ── 6. Build image ───────────────────────────────────────────────────
 echo "[build] Building openclaw:local..."
 docker build \
   ${OPENCLAW_DOCKER_APT_PACKAGES:+--build-arg OPENCLAW_DOCKER_APT_PACKAGES="$OPENCLAW_DOCKER_APT_PACKAGES"} \
   -t openclaw:local .
 
-# ── 6. Restore patched files (keep git working tree clean) ───────────
+# ── 7. Restore patched files (keep git working tree clean) ───────────
 git checkout -- Dockerfile extensions/ src/infra/diagnostic-events.ts 2>/dev/null || true
 
 echo "[build] Done. Run: docker compose up -d openclaw-gateway"
@@ -675,7 +695,7 @@ sudo chmod +x /home/openclaw/scripts/build-openclaw.sh
 
 ## 4.8b Build-Time Patches (Reference)
 
-The build script (4.8a) applies four patches inline using `sed` and `python3`. Each auto-skips when upstream fixes the issue:
+The build script (4.8a) applies five patches inline using `sed` and `python3`. Each auto-skips when upstream fixes the issue:
 
 1. **Dockerfile extension deps** (upstream #7201): Copies `extensions/diagnostics-otel/package.json` before `pnpm install`
 2. **OTEL v2.x API compat** (upstream #3201):
@@ -683,6 +703,7 @@ The build script (4.8a) applies four patches inline using `sed` and `python3`. E
    - `@opentelemetry/sdk-logs` v0.211+: `addLogRecordProcessor()` removed → pass `logRecordProcessors` in constructor
 3. **Diagnostic events dual-bundle fix**: `src/infra/diagnostic-events.ts` is bundled into both the gateway loader chunk and the plugin-sdk, creating two separate `listeners` Sets. Gateway events never reach plugin listeners. Fix: use `globalThis.__OPENCLAW_DIAG_LISTENERS__` so both bundles share one Set. Without this patch, OTEL traces and metrics don't work (logs work because they use a different code path).
 4. **Claude Code CLI**: Installs `@anthropic-ai/claude-code` globally via `npm install -g` so agents can invoke `claude` as a coding tool.
+5. **Docker + gosu**: Installs `docker.io` and `gosu` for nested Docker daemon (sandbox isolation via Sysbox). Adds node user to docker group for socket access after privilege drop.
 
 The build step also passes `OPENCLAW_DOCKER_APT_PACKAGES` as a `--build-arg` when set (upstream Dockerfile has an `ARG` that conditionally installs them).
 
@@ -692,10 +713,12 @@ No separate patch files needed — the build script contains the patches directl
 
 ## 4.8c Create Gateway Entrypoint Script
 
-The entrypoint script runs before the gateway starts. It handles several setup tasks, then passes through to whatever command Docker Compose specifies via `exec "$@"`:
+The entrypoint script runs as root (container uses `user: "0:0"`) and handles several setup tasks before dropping privileges and starting the gateway:
 1. **Lock file cleanup** — removes stale `gateway.*.lock` files left by unclean shutdowns
 2. **Config permissions fix** — ensures `openclaw.json` is `chmod 600` (gateway may rewrite with looser permissions)
-3. **Sandbox image bootstrap** — waits for the sysbox nested Docker daemon, then builds default, common, and browser sandbox images if missing
+3. **Start nested Docker daemon** — launches `dockerd` for sandbox isolation (Sysbox auto-provisions `/var/lib/docker`)
+4. **Sandbox image bootstrap** — builds default, common, and browser sandbox images if missing
+5. **Privilege drop** — `exec gosu node "$@"` drops from root to node user (uid 1000) for the gateway process
 
 The full gateway command (`node dist/index.js gateway ...`) is specified in `docker-compose.override.yml`, not hardcoded here. This makes the entrypoint agnostic to the gateway command format.
 
@@ -711,8 +734,7 @@ sudo -u openclaw tee /home/openclaw/openclaw/scripts/entrypoint-gateway.sh << 'S
 #!/bin/bash
 set -euo pipefail
 
-# ── 1a. Clean stale lock files ────────────────────────────────────────
-# Unclean shutdowns can leave lock files that prevent the gateway from starting
+# ── 1a. Clean stale lock files ──────────────────────────────────────
 lock_dir="/home/node/.openclaw"
 if compgen -G "${lock_dir}/gateway.*.lock" > /dev/null 2>&1; then
   echo "[entrypoint] Removing stale lock files:"
@@ -723,8 +745,7 @@ else
   echo "[entrypoint] No stale lock files found"
 fi
 
-# ── 1b. Fix openclaw.json permissions (security audit CRITICAL) ───────
-# The gateway may rewrite this file with looser permissions on config changes
+# ── 1b. Fix openclaw.json permissions (security audit CRITICAL) ─────
 config_file="/home/node/.openclaw/openclaw.json"
 if [ -f "$config_file" ]; then
   current_perms=$(stat -c '%a' "$config_file" 2>/dev/null || stat -f '%Lp' "$config_file" 2>/dev/null)
@@ -734,69 +755,85 @@ if [ -f "$config_file" ]; then
   fi
 fi
 
-# ── 2. Wait for nested Docker daemon and bootstrap sandbox images ─────
-# Sysbox starts a nested Docker daemon inside the container. We need to
-# wait for it before checking/building sandbox images.
-echo "[entrypoint] Waiting for nested Docker daemon..."
-timeout=30
-elapsed=0
-while ! docker info > /dev/null 2>&1; do
-  if [ "$elapsed" -ge "$timeout" ]; then
-    echo "[entrypoint] WARNING: Nested Docker daemon not available after ${timeout}s, skipping sandbox bootstrap"
-    break
+# ── 2. Start nested Docker daemon (Sysbox provides isolation) ───────
+# Sysbox auto-provisions /var/lib/docker and /var/lib/containerd as
+# writable mounts. We just need to start dockerd.
+if command -v dockerd > /dev/null 2>&1; then
+  if ! docker info > /dev/null 2>&1; then
+    echo "[entrypoint] Starting nested Docker daemon..."
+    dockerd --host=unix:///var/run/docker.sock \
+            --storage-driver=overlay2 \
+            --log-level=warn \
+            --group="$(getent group docker | cut -d: -f3)" \
+            > /var/log/dockerd.log 2>&1 &
+
+    # Wait for Docker daemon to be ready
+    echo "[entrypoint] Waiting for nested Docker daemon..."
+    timeout=30
+    elapsed=0
+    while ! docker info > /dev/null 2>&1; do
+      if [ "$elapsed" -ge "$timeout" ]; then
+        echo "[entrypoint] WARNING: Docker daemon not ready after ${timeout}s"
+        echo "[entrypoint] dockerd log:"
+        tail -20 /var/log/dockerd.log 2>/dev/null || true
+        break
+      fi
+      sleep 1
+      elapsed=$((elapsed + 1))
+    done
   fi
-  sleep 1
-  elapsed=$((elapsed + 1))
-done
 
-if docker info > /dev/null 2>&1; then
-  echo "[entrypoint] Nested Docker daemon ready (took ${elapsed}s)"
+  if docker info > /dev/null 2>&1; then
+    echo "[entrypoint] Nested Docker daemon ready (took ${elapsed:-0}s)"
 
-  # Build default sandbox image if missing
-  if ! docker image inspect openclaw-sandbox > /dev/null 2>&1; then
-    echo "[entrypoint] Sandbox image not found, building..."
-    if [ -f /app/sandbox/Dockerfile ]; then
-      docker build -t openclaw-sandbox /app/sandbox/
-      echo "[entrypoint] Sandbox image built successfully"
+    # Build default sandbox image if missing
+    if ! docker image inspect openclaw-sandbox > /dev/null 2>&1; then
+      echo "[entrypoint] Sandbox image not found, building..."
+      if [ -f /app/sandbox/Dockerfile ]; then
+        docker build -t openclaw-sandbox /app/sandbox/
+        echo "[entrypoint] Sandbox image built successfully"
+      else
+        echo "[entrypoint] WARNING: /app/sandbox/Dockerfile not found"
+      fi
     else
-      echo "[entrypoint] WARNING: /app/sandbox/Dockerfile not found, skipping sandbox image build"
+      echo "[entrypoint] Sandbox image already exists"
     fi
-  else
-    echo "[entrypoint] Sandbox image already exists"
-  fi
 
-  # Build common sandbox image if missing (includes Node.js, git, common tools)
-  if ! docker image inspect openclaw-sandbox-common:bookworm-slim > /dev/null 2>&1; then
-    echo "[entrypoint] Common sandbox image not found, building..."
-    if [ -f /app/scripts/sandbox-common-setup.sh ]; then
-      /app/scripts/sandbox-common-setup.sh
-      echo "[entrypoint] Common sandbox image built successfully"
+    # Build common sandbox image if missing (includes Node.js, git, common tools)
+    if ! docker image inspect openclaw-sandbox-common:bookworm-slim > /dev/null 2>&1; then
+      echo "[entrypoint] Common sandbox image not found, building..."
+      if [ -f /app/scripts/sandbox-common-setup.sh ]; then
+        /app/scripts/sandbox-common-setup.sh
+        echo "[entrypoint] Common sandbox image built successfully"
+      else
+        echo "[entrypoint] WARNING: sandbox-common-setup.sh not found"
+      fi
     else
-      echo "[entrypoint] WARNING: sandbox-common-setup.sh not found, skipping"
+      echo "[entrypoint] Common sandbox image already exists"
     fi
-  else
-    echo "[entrypoint] Common sandbox image already exists"
-  fi
 
-  # Build browser sandbox image if missing (includes Chromium, noVNC)
-  if ! docker image inspect openclaw-sandbox-browser:bookworm-slim > /dev/null 2>&1; then
-    echo "[entrypoint] Browser sandbox image not found, building..."
-    if [ -f /app/scripts/sandbox-browser-setup.sh ]; then
-      /app/scripts/sandbox-browser-setup.sh
-      echo "[entrypoint] Browser sandbox image built successfully"
+    # Build browser sandbox image if missing (includes Chromium, noVNC)
+    if ! docker image inspect openclaw-sandbox-browser:bookworm-slim > /dev/null 2>&1; then
+      echo "[entrypoint] Browser sandbox image not found, building..."
+      if [ -f /app/scripts/sandbox-browser-setup.sh ]; then
+        /app/scripts/sandbox-browser-setup.sh
+        echo "[entrypoint] Browser sandbox image built successfully"
+      else
+        echo "[entrypoint] WARNING: sandbox-browser-setup.sh not found"
+      fi
     else
-      echo "[entrypoint] WARNING: sandbox-browser-setup.sh not found, skipping"
+      echo "[entrypoint] Browser sandbox image already exists"
     fi
-  else
-    echo "[entrypoint] Browser sandbox image already exists"
   fi
+else
+  echo "[entrypoint] Docker not installed, skipping sandbox bootstrap"
 fi
 
-# ── 3. Exec the command from docker-compose ──────────────────────────
-# exec replaces this shell with the specified process, so tini (PID 1
-# from Docker's init: true) becomes the direct parent — proper signal handling
-echo "[entrypoint] Executing: $*"
-exec "$@"
+# ── 3. Drop privileges and exec gateway ─────────────────────────────
+# gosu drops from root to node user without spawning a subshell,
+# preserving PID structure for proper signal handling via tini
+echo "[entrypoint] Executing as node: $*"
+exec gosu node "$@"
 SCRIPTEOF
 
 # Make executable
@@ -919,9 +956,12 @@ sudo docker exec openclaw-gateway node dist/index.js --version
 
 ## Security Notes
 
-- Container runs with `read_only: true` filesystem
-- Writable directories limited to tmpfs mounts
-- Runs as non-root user (uid 1000)
-- `no-new-privileges` prevents privilege escalation
+- `read_only: false` — required for Docker-in-Docker (Sysbox auto-mounts inherit the flag). Sysbox user namespace isolation provides equivalent protection.
+- tmpfs mounts for `/tmp`, `/var/tmp`, `/run`, `/var/log` limit persistent writable paths
+- Container starts as root (`user: "0:0"`) but Sysbox maps uid 0 → unprivileged uid on host
+- Entrypoint drops to node (uid 1000) via `gosu` before starting gateway process
+- `no-new-privileges` prevents privilege escalation (gosu drops, doesn't gain)
 - Resource limits prevent runaway containers
-- Sysbox provides secure container-in-container isolation
+- Sysbox provides secure container-in-container isolation (user namespace, /proc, /sys virtualization)
+- Inner Docker socket group set to `docker`, node user is a member
+- Sandbox containers run with `network: "none"` — no outbound internet

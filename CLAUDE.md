@@ -437,6 +437,8 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 22. **Browser sandbox:** `openclaw-sandbox-browser:bookworm-slim` includes Chromium + noVNC — browser tasks viewable through Control UI, no extra ports needed (proxied through gateway)
 23. **Gateway extras:** `OPENCLAW_DOCKER_APT_PACKAGES` in `.env` passes apt packages as `--build-arg` to Docker build. Claude Code CLI installed globally via Dockerfile patch
 24. **Config permissions:** Entrypoint enforces `chmod 600` on `openclaw.json` every startup — gateway may rewrite with looser permissions on config changes
+25. **Docker-in-Docker:** Requires `user: "0:0"` and `read_only: false` in compose — Sysbox maps uid 0 to unprivileged user on host, and auto-provisions `/var/lib/docker` and `/var/lib/containerd` (but they inherit `read_only`, so must be `false`). Entrypoint starts `dockerd`, then uses `gosu node` to drop privileges before gateway start.
+26. **Sandbox mode:** `sandbox.mode: "all"` requires Docker installed inside the container (build patch #5). Without Docker, `spawn docker` crashes the gateway with EACCES. Use `"non-main"` as fallback.
 
 ---
 

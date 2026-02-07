@@ -10,6 +10,7 @@
 #      The diagnostic-events.ts module is bundled into both loader chunk and plugin-sdk,
 #      creating two separate listener Sets. Using globalThis ensures they share one Set.
 #   4. Dockerfile: install Claude Code CLI globally (@anthropic-ai/claude-code)
+#   5. Dockerfile: install Docker + gosu for nested Docker (sandbox isolation via Sysbox)
 #
 # Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 set -euo pipefail
@@ -95,13 +96,26 @@ else
   echo "[build] Claude Code CLI already in Dockerfile (already patched)"
 fi
 
-# ── 5. Build image ───────────────────────────────────────────────────
+# ── 5. Patch Dockerfile to install Docker + gosu (nested Docker for sandboxes) ──
+# docker.io includes: docker CLI, dockerd, containerd, runc
+# gosu: drop-in replacement for su/sudo that doesn't spawn subshell (proper PID 1 signal handling)
+# usermod: add node user to docker group for socket access after privilege drop
+if ! grep -q "docker.io" Dockerfile; then
+  echo "[build] Patching Dockerfile to install Docker + gosu..."
+  # Insert before USER node so it runs as root
+  # Single line to avoid sed multiline continuation issues in Dockerfile
+  sed -i '/^USER /i RUN apt-get update && apt-get install -y --no-install-recommends docker.io gosu && usermod -aG docker node && rm -rf /var/lib/apt/lists/*' Dockerfile
+else
+  echo "[build] Docker already in Dockerfile (already patched)"
+fi
+
+# ── 6. Build image ───────────────────────────────────────────────────
 echo "[build] Building openclaw:local..."
 docker build \
   ${OPENCLAW_DOCKER_APT_PACKAGES:+--build-arg OPENCLAW_DOCKER_APT_PACKAGES="$OPENCLAW_DOCKER_APT_PACKAGES"} \
   -t openclaw:local .
 
-# ── 6. Restore patched files (keep git working tree clean) ───────────
+# ── 7. Restore patched files (keep git working tree clean) ───────────
 git checkout -- Dockerfile extensions/ src/infra/diagnostic-events.ts 2>/dev/null || true
 
 echo "[build] Done. Run: docker compose up -d openclaw-gateway"

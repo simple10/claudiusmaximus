@@ -56,8 +56,9 @@ fi
 
 ## E.2 Deploy Updated Build Script and Rebuild Gateway Image
 
-The build script adds two new features:
+The build script adds three new features:
 - **Patch #4**: Installs Claude Code CLI (`@anthropic-ai/claude-code`) globally via `npm install -g`
+- **Patch #5**: Installs `docker.io` + `gosu` for nested Docker daemon (sandbox isolation via Sysbox). Adds node user to docker group for socket access after privilege drop.
 - **`--build-arg`**: Passes `OPENCLAW_DOCKER_APT_PACKAGES` to Docker build (upstream Dockerfile conditionally installs them)
 
 ```bash
@@ -77,23 +78,28 @@ sudo -u openclaw bash -c 'source /home/openclaw/openclaw/.env && /home/openclaw/
 ```
 
 The build will:
-1. Apply patches 1-4 (each auto-skips if already fixed upstream)
+1. Apply patches 1-5 (each auto-skips if already fixed upstream)
 2. Pass `--build-arg OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg build-essential imagemagick"` to Docker
 3. Install Claude Code CLI globally in the image
-4. Restore patched files to keep git tree clean
+4. Install Docker + gosu for nested Docker (sandbox isolation)
+5. Restore patched files to keep git tree clean
 
-Expect the build to take 5-10 minutes (apt packages and npm install add time).
+Expect the build to take 5-10 minutes (apt packages, Docker, and npm install add time). The `docker.io` package adds ~150MB to the image.
 
 ---
 
 ## E.3 Deploy Updated Entrypoint Script
 
-The entrypoint now handles:
+The entrypoint now runs as root (`user: "0:0"` in compose) and handles:
 1. Lock file cleanup (existing)
-2. **NEW**: `openclaw.json` permissions fix (`chmod 600` if drifted)
-3. Default sandbox image bootstrap (existing)
-4. **NEW**: Common sandbox image bootstrap (`openclaw-sandbox-common:bookworm-slim`)
-5. **NEW**: Browser sandbox image bootstrap (`openclaw-sandbox-browser:bookworm-slim`)
+2. `openclaw.json` permissions fix (`chmod 600` if drifted)
+3. **NEW**: Start nested Docker daemon (`dockerd`) — Sysbox auto-provisions `/var/lib/docker`
+4. Default sandbox image bootstrap
+5. Common sandbox image bootstrap (`openclaw-sandbox-common:bookworm-slim`)
+6. Browser sandbox image bootstrap (`openclaw-sandbox-browser:bookworm-slim`)
+7. **NEW**: Privilege drop via `exec gosu node "$@"` — gateway runs as node (uid 1000)
+
+> **Important:** The compose override must also be updated to use `user: "0:0"` and add `/var/log` tmpfs. See section E.3a below.
 
 ```bash
 #!/bin/bash
@@ -106,8 +112,7 @@ sudo -u openclaw tee /home/openclaw/openclaw/scripts/entrypoint-gateway.sh << 'S
 #!/bin/bash
 set -euo pipefail
 
-# ── 1a. Clean stale lock files ────────────────────────────────────────
-# Unclean shutdowns can leave lock files that prevent the gateway from starting
+# ── 1a. Clean stale lock files ──────────────────────────────────────
 lock_dir="/home/node/.openclaw"
 if compgen -G "${lock_dir}/gateway.*.lock" > /dev/null 2>&1; then
   echo "[entrypoint] Removing stale lock files:"
@@ -118,8 +123,7 @@ else
   echo "[entrypoint] No stale lock files found"
 fi
 
-# ── 1b. Fix openclaw.json permissions (security audit CRITICAL) ───────
-# The gateway may rewrite this file with looser permissions on config changes
+# ── 1b. Fix openclaw.json permissions (security audit CRITICAL) ─────
 config_file="/home/node/.openclaw/openclaw.json"
 if [ -f "$config_file" ]; then
   current_perms=$(stat -c '%a' "$config_file" 2>/dev/null || stat -f '%Lp' "$config_file" 2>/dev/null)
@@ -129,73 +133,121 @@ if [ -f "$config_file" ]; then
   fi
 fi
 
-# ── 2. Wait for nested Docker daemon and bootstrap sandbox images ─────
-# Sysbox starts a nested Docker daemon inside the container. We need to
-# wait for it before checking/building sandbox images.
-echo "[entrypoint] Waiting for nested Docker daemon..."
-timeout=30
-elapsed=0
-while ! docker info > /dev/null 2>&1; do
-  if [ "$elapsed" -ge "$timeout" ]; then
-    echo "[entrypoint] WARNING: Nested Docker daemon not available after ${timeout}s, skipping sandbox bootstrap"
-    break
+# ── 2. Start nested Docker daemon (Sysbox provides isolation) ───────
+# Sysbox auto-provisions /var/lib/docker and /var/lib/containerd as
+# writable mounts. We just need to start dockerd.
+if command -v dockerd > /dev/null 2>&1; then
+  if ! docker info > /dev/null 2>&1; then
+    echo "[entrypoint] Starting nested Docker daemon..."
+    dockerd --host=unix:///var/run/docker.sock \
+            --storage-driver=overlay2 \
+            --log-level=warn \
+            --group="$(getent group docker | cut -d: -f3)" \
+            > /var/log/dockerd.log 2>&1 &
+
+    # Wait for Docker daemon to be ready
+    echo "[entrypoint] Waiting for nested Docker daemon..."
+    timeout=30
+    elapsed=0
+    while ! docker info > /dev/null 2>&1; do
+      if [ "$elapsed" -ge "$timeout" ]; then
+        echo "[entrypoint] WARNING: Docker daemon not ready after ${timeout}s"
+        echo "[entrypoint] dockerd log:"
+        tail -20 /var/log/dockerd.log 2>/dev/null || true
+        break
+      fi
+      sleep 1
+      elapsed=$((elapsed + 1))
+    done
   fi
-  sleep 1
-  elapsed=$((elapsed + 1))
-done
 
-if docker info > /dev/null 2>&1; then
-  echo "[entrypoint] Nested Docker daemon ready (took ${elapsed}s)"
+  if docker info > /dev/null 2>&1; then
+    echo "[entrypoint] Nested Docker daemon ready (took ${elapsed:-0}s)"
 
-  # Build default sandbox image if missing
-  if ! docker image inspect openclaw-sandbox > /dev/null 2>&1; then
-    echo "[entrypoint] Sandbox image not found, building..."
-    if [ -f /app/sandbox/Dockerfile ]; then
-      docker build -t openclaw-sandbox /app/sandbox/
-      echo "[entrypoint] Sandbox image built successfully"
+    # Build default sandbox image if missing
+    if ! docker image inspect openclaw-sandbox > /dev/null 2>&1; then
+      echo "[entrypoint] Sandbox image not found, building..."
+      if [ -f /app/sandbox/Dockerfile ]; then
+        docker build -t openclaw-sandbox /app/sandbox/
+        echo "[entrypoint] Sandbox image built successfully"
+      else
+        echo "[entrypoint] WARNING: /app/sandbox/Dockerfile not found"
+      fi
     else
-      echo "[entrypoint] WARNING: /app/sandbox/Dockerfile not found, skipping sandbox image build"
+      echo "[entrypoint] Sandbox image already exists"
     fi
-  else
-    echo "[entrypoint] Sandbox image already exists"
-  fi
 
-  # Build common sandbox image if missing (includes Node.js, git, common tools)
-  if ! docker image inspect openclaw-sandbox-common:bookworm-slim > /dev/null 2>&1; then
-    echo "[entrypoint] Common sandbox image not found, building..."
-    if [ -f /app/scripts/sandbox-common-setup.sh ]; then
-      /app/scripts/sandbox-common-setup.sh
-      echo "[entrypoint] Common sandbox image built successfully"
+    # Build common sandbox image if missing (includes Node.js, git, common tools)
+    if ! docker image inspect openclaw-sandbox-common:bookworm-slim > /dev/null 2>&1; then
+      echo "[entrypoint] Common sandbox image not found, building..."
+      if [ -f /app/scripts/sandbox-common-setup.sh ]; then
+        /app/scripts/sandbox-common-setup.sh
+        echo "[entrypoint] Common sandbox image built successfully"
+      else
+        echo "[entrypoint] WARNING: sandbox-common-setup.sh not found"
+      fi
     else
-      echo "[entrypoint] WARNING: sandbox-common-setup.sh not found, skipping"
+      echo "[entrypoint] Common sandbox image already exists"
     fi
-  else
-    echo "[entrypoint] Common sandbox image already exists"
-  fi
 
-  # Build browser sandbox image if missing (includes Chromium, noVNC)
-  if ! docker image inspect openclaw-sandbox-browser:bookworm-slim > /dev/null 2>&1; then
-    echo "[entrypoint] Browser sandbox image not found, building..."
-    if [ -f /app/scripts/sandbox-browser-setup.sh ]; then
-      /app/scripts/sandbox-browser-setup.sh
-      echo "[entrypoint] Browser sandbox image built successfully"
+    # Build browser sandbox image if missing (includes Chromium, noVNC)
+    if ! docker image inspect openclaw-sandbox-browser:bookworm-slim > /dev/null 2>&1; then
+      echo "[entrypoint] Browser sandbox image not found, building..."
+      if [ -f /app/scripts/sandbox-browser-setup.sh ]; then
+        /app/scripts/sandbox-browser-setup.sh
+        echo "[entrypoint] Browser sandbox image built successfully"
+      else
+        echo "[entrypoint] WARNING: sandbox-browser-setup.sh not found"
+      fi
     else
-      echo "[entrypoint] WARNING: sandbox-browser-setup.sh not found, skipping"
+      echo "[entrypoint] Browser sandbox image already exists"
     fi
-  else
-    echo "[entrypoint] Browser sandbox image already exists"
   fi
+else
+  echo "[entrypoint] Docker not installed, skipping sandbox bootstrap"
 fi
 
-# ── 3. Exec the command from docker-compose ──────────────────────────
-# exec replaces this shell with the specified process, so tini (PID 1
-# from Docker's init: true) becomes the direct parent — proper signal handling
-echo "[entrypoint] Executing: $*"
-exec "$@"
+# ── 3. Drop privileges and exec gateway ─────────────────────────────
+# gosu drops from root to node user without spawning a subshell,
+# preserving PID structure for proper signal handling via tini
+echo "[entrypoint] Executing as node: $*"
+exec gosu node "$@"
 SCRIPTEOF
 
 sudo chmod +x /home/openclaw/openclaw/scripts/entrypoint-gateway.sh
 ```
+
+---
+
+## E.3a Update Docker Compose Override
+
+The container must run as root so the entrypoint can start `dockerd`. Sysbox maps uid 0 inside the container to an unprivileged user on the host. The entrypoint drops to node (uid 1000) via `gosu` before starting the gateway.
+
+```bash
+#!/bin/bash
+# Update docker-compose.override.yml on VPS-1
+COMPOSE_FILE="/home/openclaw/openclaw/docker-compose.override.yml"
+
+# Change user from 1000:1000 to 0:0
+sudo -u openclaw sed -i 's/user: "1000:1000"/user: "0:0"/' "$COMPOSE_FILE"
+
+# Change read_only to false (Sysbox auto-mounts inherit the flag)
+sudo -u openclaw sed -i 's/read_only: true/read_only: false/' "$COMPOSE_FILE"
+
+# Add /var/log tmpfs (dockerd writes logs there) and increase /tmp to 1G
+sudo -u openclaw sed -i 's|/tmp:size=500M,mode=1777|/tmp:size=1G,mode=1777|' "$COMPOSE_FILE"
+# Add /var/log tmpfs after /run tmpfs line
+sudo -u openclaw sed -i '/\/run:size=100M,mode=755/a\      - /var/log:size=100M,mode=755' "$COMPOSE_FILE"
+
+echo "Updated compose: user=0:0, read_only=false, added /var/log tmpfs"
+```
+
+Key changes:
+- `user: "0:0"` — root inside container (Sysbox maps to unprivileged on host)
+- `read_only: false` — required because Sysbox auto-mounts inherit the read_only flag; dockerd can't write to `/var/lib/docker` with `read_only: true`
+- `/var/log` tmpfs — dockerd writes logs to `/var/log/dockerd.log`
+- `/tmp` increased to 1G — sandbox builds use temp space
+- `no-new-privileges:true` kept — gosu drops privileges, doesn't gain
 
 ---
 
@@ -211,11 +263,11 @@ Follow section 4.8 in `playbooks/04-vps1-openclaw.md` — it now includes the `a
   "agents": {
     "defaults": {
       "sandbox": {
-        "mode": "non-main",
+        "mode": "all",
         "scope": "agent",
         "docker": {
           "image": "openclaw-sandbox-common:bookworm-slim",
-          "network": "none",
+          "network": "bridge",
           "memory": "1g",
           "cpus": 1
         },
@@ -231,7 +283,7 @@ Follow section 4.8 in `playbooks/04-vps1-openclaw.md` — it now includes the `a
   "tools": {
     "sandbox": {
       "tools": {
-        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
+        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "browser", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
         "deny": ["canvas", "nodes", "cron", "discord", "gateway"]
       }
     }
@@ -239,8 +291,8 @@ Follow section 4.8 in `playbooks/04-vps1-openclaw.md` — it now includes the `a
 ```
 
 Key decisions:
-- `mode: "non-main"` — only sub-agents run in sandboxes, main agent stays unsandboxed (required until Docker is available inside the container)
-- `network: "none"` — strict isolation, no outbound internet from sandboxes
+- `mode: "all"` — all agents (including main) run in sandboxes. Requires Docker installed inside the container (patch #5 in build script).
+- `network: "bridge"` — required for browser CDP connectivity. `"none"` breaks browser tool (gateway can't resolve CDP port). Sandbox containers are already double-isolated inside Sysbox nested Docker.
 - `"browser"` is NOT in the deny list so sandbox agents can use browser tools
 - noVNC is enabled for visual browser access through the Control UI
 
@@ -327,8 +379,27 @@ import sys, json
 cfg = json.load(sys.stdin)
 print('agents:', 'OK' if 'agents' in cfg else 'MISSING')
 print('tools:', 'OK' if 'tools' in cfg else 'MISSING')
+mode = cfg.get('agents', {}).get('defaults', {}).get('sandbox', {}).get('mode')
+print('sandbox.mode:', mode)
 print('browser enabled:', cfg.get('agents', {}).get('defaults', {}).get('sandbox', {}).get('browser', {}).get('enabled', False))
 "
+
+# 7. Verify gateway process runs as node (not root)
+echo ""
+echo "=== Process User ==="
+sudo docker exec openclaw-gateway ps aux | grep "node dist/index.js"
+# Should show: node (uid 1000), NOT root
+
+# 8. Verify dockerd runs as root
+echo ""
+echo "=== Docker Daemon ==="
+sudo docker exec openclaw-gateway ps aux | grep dockerd
+# Should show: root
+
+# 9. Docker socket accessible by gateway
+echo ""
+echo "=== Docker Socket ==="
+sudo docker exec openclaw-gateway su -s /bin/sh node -c "docker info > /dev/null && echo 'socket OK'"
 ```
 
 ### Expected Output

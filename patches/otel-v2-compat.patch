@@ -1,0 +1,32 @@
+--- a/extensions/diagnostics-otel/src/service.ts
++++ b/extensions/diagnostics-otel/src/service.ts
+@@ -1,6 +1,6 @@
+-import { Resource } from "@opentelemetry/resources";
++import { resourceFromAttributes } from "@opentelemetry/resources";
+
+-const resource = new Resource({
++const resource = resourceFromAttributes({
+
+--- a/extensions/diagnostics-otel/src/service.ts
++++ b/extensions/diagnostics-otel/src/service.ts
+@@ -1,8 +1,12 @@
+-        logProvider = new LoggerProvider({ resource });
+-        logProvider.addLogRecordProcessor(
+-          new BatchLogRecordProcessor(
+-            logExporter,
+-            typeof otel.flushIntervalMs === "number"
+-              ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
+-              : {},
+-          ),
+-        );
++        logProvider = new LoggerProvider({
++          resource,
++          logRecordProcessors: [
++            new BatchLogRecordProcessor(
++              logExporter,
++              typeof otel.flushIntervalMs === "number"
++                ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
++                : {},
++            ),
++          ],
++        });

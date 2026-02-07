@@ -173,17 +173,14 @@ echo "========================================="
 
 ## 4.6 Create Docker Compose Override
 
-The OpenClaw repo includes a docker-compose.yml. Create an override file to add build config, security hardening, and monitoring services:
+The OpenClaw repo includes a docker-compose.yml. Create an override file to add security hardening and monitoring services. Building happens separately via the build script (section 4.8a), not via `docker compose build`.
 
 ```bash
 #!/bin/bash
 sudo -u openclaw tee /home/openclaw/openclaw/docker-compose.override.yml << 'EOF'
 services:
   openclaw-gateway:
-    # Build configuration - uses custom Dockerfile for OTEL extension support
-    build:
-      context: .
-      dockerfile: Dockerfile.custom
+    # Image built by scripts/build-openclaw.sh (not by docker compose build)
     image: openclaw:local
     container_name: openclaw-gateway
     runtime: sysbox-runc
@@ -207,15 +204,16 @@ services:
           cpus: "1"
           memory: 2G
     volumes:
-      # Patch: Fix @opentelemetry/resources v2.x API change (from 4.8b)
-      - ./patches-runtime/diagnostics-otel-service.ts:/app/extensions/diagnostics-otel/src/service.ts:ro
-      # Entrypoint script: lock cleanup, sandbox bootstrap, then exec gateway (from 4.8c)
+      # Entrypoint script: lock cleanup, sandbox bootstrap, then exec "$@" (from 4.8c)
       - ./scripts/entrypoint-gateway.sh:/app/scripts/entrypoint-gateway.sh:ro
-    # Entrypoint handles pre-start tasks before exec-ing the gateway
+    # Entrypoint handles pre-start tasks before exec-ing the command
     entrypoint: ["/app/scripts/entrypoint-gateway.sh"]
-    # Args passed to entrypoint, which passes them to: node dist/index.js gateway
+    # Full gateway command (entrypoint passes it through via exec "$@")
     command:
       [
+        "node",
+        "dist/index.js",
+        "gateway",
         "--allow-unconfigured",
         "--bind",
         "lan",
@@ -248,10 +246,7 @@ services:
         max-file: "5"
 
   openclaw-cli:
-    # Build configuration for CLI
-    build:
-      context: .
-      dockerfile: Dockerfile.custom
+    # Same image as gateway, built by scripts/build-openclaw.sh
     image: openclaw:local
     runtime: sysbox-runc
     networks:
@@ -449,129 +444,121 @@ sudo chmod 600 /home/openclaw/.openclaw/openclaw.json
 
 ---
 
-## 4.8a Create Custom Dockerfile for OTEL Support
+## 4.8a Install Build Script and Patches
 
-The upstream Dockerfile doesn't install extension dependencies (e.g., `@opentelemetry/api`) because
-extension `package.json` files aren't copied before `pnpm install --frozen-lockfile`. This custom
-Dockerfile adds the `diagnostics-otel` extension's `package.json` to the install step.
+Instead of maintaining a forked Dockerfile, we patch the upstream Dockerfile and source in-place before building. Each patch auto-skips when the corresponding upstream issue is fixed.
+
+Two upstream issues require patching:
+- [#7201](https://github.com/openclaw/openclaw/issues/7201): Dockerfile doesn't copy extension `package.json` before `pnpm install`
+- [#3201](https://github.com/openclaw/openclaw/issues/3201): `diagnostics-otel` uses deprecated `@opentelemetry` v2.x APIs
 
 ```bash
 #!/bin/bash
-# Create custom Dockerfile that includes OTEL extension dependencies
-sudo -u openclaw tee /home/openclaw/openclaw/Dockerfile.custom << 'DOCKEREOF'
-FROM node:22-bookworm
+# Create directories
+sudo -u openclaw mkdir -p /home/openclaw/scripts
+sudo -u openclaw mkdir -p /home/openclaw/patches
 
-# Install Bun (required for build scripts)
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:${PATH}"
+# Install build script
+sudo -u openclaw tee /home/openclaw/scripts/build-openclaw.sh << 'SCRIPTEOF'
+#!/bin/bash
+# Build OpenClaw with auto-patching for upstream issues.
+#
+# Patches applied (each auto-skips when upstream fixes the issue):
+#   1. Dockerfile: copy extension package.json before pnpm install (upstream #7201)
+#   2. OTEL extension: fix @opentelemetry v2.x API changes (upstream #3201)
+#
+# Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
+set -euo pipefail
 
-RUN corepack enable
+cd /home/openclaw/openclaw
 
-WORKDIR /app
+# ── 1. Patch Dockerfile for extension deps (upstream #7201) ──────────
+if ! grep -q "extensions/diagnostics-otel/package.json" Dockerfile; then
+  echo "[build] Patching Dockerfile for extension deps (upstream #7201)..."
+  sed -i '/COPY scripts \.\/scripts/a COPY extensions/diagnostics-otel/package.json ./extensions/diagnostics-otel/package.json' Dockerfile
+else
+  echo "[build] Dockerfile already includes extension deps (upstream #7201 fixed or already patched)"
+fi
 
-ARG OPENCLAW_DOCKER_APT_PACKAGES=""
-RUN if [ -n "$OPENCLAW_DOCKER_APT_PACKAGES" ]; then \
-      apt-get update && \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $OPENCLAW_DOCKER_APT_PACKAGES && \
-      apt-get clean && \
-      rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
-    fi
+# ── 2. Patch OTEL v2.x API compat (upstream #3201) ──────────────────
+if grep -q "new Resource(" extensions/diagnostics-otel/src/service.ts 2>/dev/null; then
+  echo "[build] Applying OTEL v2.x compatibility patch (upstream #3201)..."
+  patch -p1 < /home/openclaw/patches/otel-v2-compat.patch
+else
+  echo "[build] OTEL v2.x patch not needed (upstream fixed or already patched)"
+fi
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
-COPY ui/package.json ./ui/package.json
-# Copy extension package.json files so pnpm can resolve workspace dependencies
-COPY extensions/diagnostics-otel/package.json ./extensions/diagnostics-otel/package.json
-COPY patches ./patches
-COPY scripts ./scripts
+# ── 3. Build image ───────────────────────────────────────────────────
+echo "[build] Building openclaw:local..."
+docker build -t openclaw:local .
 
-RUN pnpm install --frozen-lockfile
+# ── 4. Restore patched files (keep git working tree clean) ───────────
+git checkout -- Dockerfile extensions/ 2>/dev/null || true
 
-COPY . .
-RUN OPENCLAW_A2UI_SKIP_MISSING=1 pnpm build
-ENV OPENCLAW_PREFER_PNPM=1
-RUN pnpm ui:build
+echo "[build] Done. Run: docker compose up -d openclaw-gateway"
+SCRIPTEOF
 
-ENV NODE_ENV=production
-
-RUN chown -R node:node /app
-
-USER node
-
-CMD ["node", "dist/index.js", "gateway", "--allow-unconfigured"]
-DOCKEREOF
+sudo chmod +x /home/openclaw/scripts/build-openclaw.sh
 ```
 
 ---
 
-## 4.8b Patch diagnostics-otel for @opentelemetry v2.x API changes
+## 4.8b Install OTEL v2.x Compatibility Patch
 
-The upstream `diagnostics-otel` extension needs two patches for `@opentelemetry` v2.x:
+The upstream `diagnostics-otel` extension needs two fixes for `@opentelemetry` v2.x:
 1. `@opentelemetry/resources` v2.x: `new Resource()` → `resourceFromAttributes()`
 2. `@opentelemetry/sdk-logs` v0.211+: `LoggerProvider.addLogRecordProcessor()` removed → pass `logRecordProcessors` in constructor
 
-Create a patched version and mount it via Docker volume.
+This patch is applied at build time by the build script (4.8a), not mounted at runtime.
 
 ```bash
 #!/bin/bash
-# Create patches directory
-sudo -u openclaw mkdir -p /home/openclaw/openclaw/patches-runtime
+# Install the unified diff patch (applied by build script before docker build)
+sudo -u openclaw tee /home/openclaw/patches/otel-v2-compat.patch << 'PATCHEOF'
+--- a/extensions/diagnostics-otel/src/service.ts
++++ b/extensions/diagnostics-otel/src/service.ts
+@@ -1,6 +1,6 @@
+-import { Resource } from "@opentelemetry/resources";
++import { resourceFromAttributes } from "@opentelemetry/resources";
 
-# Copy the original and patch it
-sudo docker cp openclaw-gateway:/app/extensions/diagnostics-otel/src/service.ts /tmp/otel-service.ts
+-const resource = new Resource({
++const resource = resourceFromAttributes({
 
-# Patch 1: Resource -> resourceFromAttributes
-sed -i 's/import { Resource } from "@opentelemetry\/resources";/import { resourceFromAttributes } from "@opentelemetry\/resources";/' /tmp/otel-service.ts
-sed -i 's/const resource = new Resource(/const resource = resourceFromAttributes(/' /tmp/otel-service.ts
-
-# Patch 2: LoggerProvider constructor-based processors (addLogRecordProcessor removed in v0.211+)
-# Replace:
-#   logProvider = new LoggerProvider({ resource });
-#   logProvider.addLogRecordProcessor(new BatchLogRecordProcessor(logExporter, ...));
-# With:
-#   logProvider = new LoggerProvider({ resource, logRecordProcessors: [...] });
-python3 -c "
-import sys
-with open('/tmp/otel-service.ts', 'r') as f:
-    content = f.read()
-old = '''        logProvider = new LoggerProvider({ resource });
-        logProvider.addLogRecordProcessor(
-          new BatchLogRecordProcessor(
-            logExporter,
-            typeof otel.flushIntervalMs === \"number\"
-              ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
-              : {},
-          ),
-        );'''
-new = '''        logProvider = new LoggerProvider({
-          resource,
-          logRecordProcessors: [
-            new BatchLogRecordProcessor(
-              logExporter,
-              typeof otel.flushIntervalMs === \"number\"
-                ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
-                : {},
-            ),
-          ],
-        });'''
-content = content.replace(old, new)
-with open('/tmp/otel-service.ts', 'w') as f:
-    f.write(content)
-"
-
-sudo cp /tmp/otel-service.ts /home/openclaw/openclaw/patches-runtime/diagnostics-otel-service.ts
-sudo chown openclaw:openclaw /home/openclaw/openclaw/patches-runtime/diagnostics-otel-service.ts
+--- a/extensions/diagnostics-otel/src/service.ts
++++ b/extensions/diagnostics-otel/src/service.ts
+@@ -1,8 +1,12 @@
+-        logProvider = new LoggerProvider({ resource });
+-        logProvider.addLogRecordProcessor(
+-          new BatchLogRecordProcessor(
+-            logExporter,
+-            typeof otel.flushIntervalMs === "number"
+-              ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
+-              : {},
+-          ),
+-        );
++        logProvider = new LoggerProvider({
++          resource,
++          logRecordProcessors: [
++            new BatchLogRecordProcessor(
++              logExporter,
++              typeof otel.flushIntervalMs === "number"
++                ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
++                : {},
++            ),
++          ],
++        });
+PATCHEOF
 ```
-
-The volume mount for this patch is included in the `docker-compose.override.yml` from section 4.6.
 
 ---
 
 ## 4.8c Create Gateway Entrypoint Script
 
-The entrypoint script runs before the gateway starts. It handles three tasks:
+The entrypoint script runs before the gateway starts. It handles two setup tasks, then passes through to whatever command Docker Compose specifies via `exec "$@"`:
 1. **Lock file cleanup** — removes stale `gateway.*.lock` files left by unclean shutdowns
 2. **Sandbox image bootstrap** — waits for the sysbox nested Docker daemon, then builds sandbox images if missing
-3. **Exec gateway** — replaces itself with the Node process so tini (from `init: true`) is the direct parent
+
+The full gateway command (`node dist/index.js gateway ...`) is specified in `docker-compose.override.yml`, not hardcoded here. This makes the entrypoint agnostic to the gateway command format.
 
 > **Note:** Do NOT use `exec tini --` in the script. Docker's `init: true` already provides tini as PID 1. Double-wrapping would break signal forwarding.
 
@@ -629,11 +616,11 @@ if docker info > /dev/null 2>&1; then
   fi
 fi
 
-# ── 3. Start the gateway ──────────────────────────────────────────────
-# exec replaces this shell with the node process, so tini (PID 1 from
-# Docker's init: true) becomes the direct parent — proper signal handling
-echo "[entrypoint] Starting gateway: node dist/index.js gateway $*"
-exec node dist/index.js gateway "$@"
+# ── 3. Exec the command from docker-compose ──────────────────────────
+# exec replaces this shell with the specified process, so tini (PID 1
+# from Docker's init: true) becomes the direct parent — proper signal handling
+echo "[entrypoint] Executing: $*"
+exec "$@"
 SCRIPTEOF
 
 # Make executable
@@ -646,17 +633,15 @@ sudo chmod +x /home/openclaw/openclaw/scripts/entrypoint-gateway.sh
 
 ```bash
 #!/bin/bash
-cd /home/openclaw/openclaw
-
-# Build image
-sudo -u openclaw docker build -t openclaw:local .
+# Build image with auto-patching
+sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 
 # Start services
-sudo -u openclaw docker compose up -d
+sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker compose up -d'
 
 # Check status
-sudo -u openclaw docker compose ps
-sudo docker logs --tail 20 openclaw-openclaw-gateway-1
+sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker compose ps'
+sudo docker logs --tail 20 openclaw-gateway
 ```
 
 ---
@@ -668,7 +653,7 @@ sudo docker logs --tail 20 openclaw-openclaw-gateway-1
 sudo -u openclaw docker compose ps
 
 # Check gateway logs
-sudo docker logs --tail 50 openclaw-openclaw-gateway-1
+sudo docker logs --tail 50 openclaw-gateway
 
 # Test internal endpoint
 curl -s http://localhost:18789/ | head -5
@@ -698,7 +683,7 @@ sudo dpkg -i sysbox-ce_*.deb
 
 ```bash
 # Check logs for config errors
-sudo docker logs openclaw-openclaw-gateway-1
+sudo docker logs openclaw-gateway
 
 # Common issue: Invalid config keys in openclaw.json
 # Solution: Keep config minimal, only use documented keys
@@ -731,15 +716,17 @@ docker network create --driver bridge --subnet 172.30.0.0/24 openclaw-gateway-ne
 
 ## Updating OpenClaw
 
-The `openclaw update` CLI command does **not** work inside Docker — the `.git` directory is excluded by `.dockerignore`, so the update tool reports `not-git-install`. Instead, update by rebuilding from the host git repo.
+The `openclaw update` CLI command does **not** work inside Docker — the `.git` directory is excluded by `.dockerignore`, so the update tool reports `not-git-install`. Instead, update by rebuilding from the host git repo using the build script.
+
+The build script auto-patches upstream issues and restores the git working tree after building, so `git pull` always works cleanly.
 
 ```bash
 #!/bin/bash
 # 1. Pull latest source
 sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && git pull origin main'
 
-# 2. Rebuild the image
-sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker build -f Dockerfile.custom -t openclaw:local .'
+# 2. Rebuild with auto-patching
+sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 
 # 3. Recreate containers with the new image
 sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker compose up -d'
@@ -749,6 +736,8 @@ sudo docker exec openclaw-gateway node dist/index.js --version
 ```
 
 > **Note:** Step 3 automatically stops the old container and starts a new one from the rebuilt image. Expect a brief gateway downtime during the restart.
+>
+> When upstream fixes either patched issue (#7201 or #3201), the build script auto-detects and skips the corresponding patch. No manual intervention needed.
 
 ---
 

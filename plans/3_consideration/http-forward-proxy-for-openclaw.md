@@ -1,5 +1,16 @@
 # Plan: HTTPS Forward Proxy for LLM Traffic Logging
 
+Refer to <https://claude.ai/share/33400959-a738-48ba-a00c-6ff601c48489> before implementing.
+Also see [](./http-transparent-sidecar-proxy.md)
+
+We want to be able to allow or deny outbound traffic based on the container type.
+e.g. Browser Sandbox -> Allow. Arbitrary Code Sandbox -> Deny.
+
+We don't really need the sidecar for LLMetry when openclaw is configured to use
+the cloudflare worker gateway as the only configured endpoint.
+
+Sidecar is for security.
+
 ## Context
 
 All outbound HTTP/HTTPS traffic from the OpenClaw gateway currently flows directly to external APIs (Anthropic, OpenAI, etc.) with no interception point. We need a forward proxy sidecar on VPS-1 that intercepts HTTPS traffic, logs full request/response bodies to the OTEL backend (Loki on VPS-2), and forwards requests to the intended LLM provider.

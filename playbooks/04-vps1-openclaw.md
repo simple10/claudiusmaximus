@@ -214,6 +214,8 @@ services:
     volumes:
       # Entrypoint script: lock cleanup, start dockerd, sandbox bootstrap, gosu drop to node (from 4.8c)
       - ./scripts/entrypoint-gateway.sh:/app/scripts/entrypoint-gateway.sh:ro
+      # Claude Code sandbox credentials (isolated from gateway creds, shared with sandboxes via openclaw.json binds)
+      - /home/openclaw/.claude-sandbox:/home/node/.claude-sandbox
     # Entrypoint handles pre-start tasks before exec-ing the command
     entrypoint: ["/app/scripts/entrypoint-gateway.sh"]
     # Full gateway command (entrypoint passes it through via exec "$@")
@@ -412,11 +414,11 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
         "mode": "all",
         "scope": "agent",
         "docker": {
-          "image": "openclaw-sandbox-common:bookworm-slim",
+          "image": "openclaw-sandbox-claude:bookworm-slim",
           "containerPrefix": "openclaw-sbx-",
           "workdir": "/workspace",
           "readOnlyRoot": true,
-          "tmpfs": ["/tmp", "/var/tmp", "/run"],
+          "tmpfs": ["/tmp", "/var/tmp", "/run", "/home/linuxbrew:uid=1000,gid=1000"],
           "network": "bridge",
           "user": "1000:1000",
           "capDrop": ["ALL"],
@@ -424,7 +426,10 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
           "pidsLimit": 256,
           "memory": "1g",
           "memorySwap": "2g",
-          "cpus": 1
+          "cpus": 1,
+          "binds": [
+            "/home/node/.claude-sandbox:/home/linuxbrew/.claude"
+          ]
         },
         "browser": {
           "enabled": true,
@@ -439,8 +444,8 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
           "autoStartTimeoutMs": 12000
         },
         "prune": {
-          "idleHours": 24,
-          "maxAgeDays": 7
+          "idleHours": 168,
+          "maxAgeDays": 60
         }
       }
     }
@@ -495,11 +500,11 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
         "mode": "all",
         "scope": "agent",
         "docker": {
-          "image": "openclaw-sandbox-common:bookworm-slim",
+          "image": "openclaw-sandbox-claude:bookworm-slim",
           "containerPrefix": "openclaw-sbx-",
           "workdir": "/workspace",
           "readOnlyRoot": true,
-          "tmpfs": ["/tmp", "/var/tmp", "/run"],
+          "tmpfs": ["/tmp", "/var/tmp", "/run", "/home/linuxbrew:uid=1000,gid=1000"],
           "network": "bridge",
           "user": "1000:1000",
           "capDrop": ["ALL"],
@@ -507,7 +512,10 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
           "pidsLimit": 256,
           "memory": "1g",
           "memorySwap": "2g",
-          "cpus": 1
+          "cpus": 1,
+          "binds": [
+            "/home/node/.claude-sandbox:/home/linuxbrew/.claude"
+          ]
         },
         "browser": {
           "enabled": true,
@@ -522,8 +530,8 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
           "autoStartTimeoutMs": 12000
         },
         "prune": {
-          "idleHours": 24,
-          "maxAgeDays": 7
+          "idleHours": 168,
+          "maxAgeDays": 60
         }
       }
     }
@@ -716,9 +724,11 @@ No separate patch files needed — the build script contains the patches directl
 The entrypoint script runs as root (container uses `user: "0:0"`) and handles several setup tasks before dropping privileges and starting the gateway:
 1. **Lock file cleanup** — removes stale `gateway.*.lock` files left by unclean shutdowns
 2. **Config permissions fix** — ensures `openclaw.json` is `chmod 600` (gateway may rewrite with looser permissions)
-3. **Start nested Docker daemon** — launches `dockerd` for sandbox isolation (Sysbox auto-provisions `/var/lib/docker`)
-4. **Sandbox image bootstrap** — builds default, common, and browser sandbox images if missing
-5. **Privilege drop** — `exec gosu node "$@"` drops from root to node user (uid 1000) for the gateway process
+3. **Sandbox credentials ownership fix** — chowns `.claude-sandbox` to node (1000) to undo Sysbox uid remapping
+4. **Start nested Docker daemon** — launches `dockerd` for sandbox isolation (Sysbox auto-provisions `/var/lib/docker`)
+5. **Sandbox image bootstrap** — builds default, common, browser, and claude sandbox images if missing
+6. **Claude sandbox build** — layers `openclaw-sandbox-claude` on top of common with Claude Code CLI via `docker build`
+7. **Privilege drop** — `exec gosu node "$@"` drops from root to node user (uid 1000) for the gateway process
 
 The full gateway command (`node dist/index.js gateway ...`) is specified in `docker-compose.override.yml`, not hardcoded here. This makes the entrypoint agnostic to the gateway command format.
 
@@ -752,6 +762,18 @@ if [ -f "$config_file" ]; then
   if [ "$current_perms" != "600" ]; then
     chmod 600 "$config_file"
     echo "[entrypoint] Fixed openclaw.json permissions: ${current_perms} -> 600"
+  fi
+fi
+
+# ── 1c. Fix .claude-sandbox dir ownership (Sysbox uid remapping) ────
+# Sandbox credentials dir: host bind mount arrives with host uid which Sysbox remaps.
+# Chown to node (1000) so sandbox containers (via binds) can access it.
+claude_dir="/home/node/.claude-sandbox"
+if [ -d "$claude_dir" ]; then
+  dir_owner=$(stat -c '%u' "$claude_dir" 2>/dev/null)
+  if [ "$dir_owner" != "1000" ]; then
+    chown -R 1000:1000 "$claude_dir"
+    echo "[entrypoint] Fixed .claude-sandbox ownership: ${dir_owner} -> 1000"
   fi
 fi
 
@@ -823,6 +845,18 @@ if command -v dockerd > /dev/null 2>&1; then
       fi
     else
       echo "[entrypoint] Browser sandbox image already exists"
+    fi
+
+    # Build claude sandbox image if missing (layered on common with Claude Code CLI)
+    # This is a separate image so common stays clean — only claude sandbox has the CLI
+    if ! docker image inspect openclaw-sandbox-claude:bookworm-slim > /dev/null 2>&1; then
+      if docker image inspect openclaw-sandbox-common:bookworm-slim > /dev/null 2>&1; then
+        echo "[entrypoint] Claude sandbox image not found, building..."
+        printf 'FROM openclaw-sandbox-common:bookworm-slim\nUSER root\nRUN npm install -g @anthropic-ai/claude-code\nUSER 1000\n' | docker build -t openclaw-sandbox-claude:bookworm-slim -
+        echo "[entrypoint] Claude sandbox image built successfully"
+      fi
+    else
+      echo "[entrypoint] Claude sandbox image already exists"
     fi
   fi
 else

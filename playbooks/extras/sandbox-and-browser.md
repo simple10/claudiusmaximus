@@ -93,11 +93,13 @@ Expect the build to take 5-10 minutes (apt packages, Docker, and npm install add
 The entrypoint now runs as root (`user: "0:0"` in compose) and handles:
 1. Lock file cleanup (existing)
 2. `openclaw.json` permissions fix (`chmod 600` if drifted)
-3. **NEW**: Start nested Docker daemon (`dockerd`) — Sysbox auto-provisions `/var/lib/docker`
-4. Default sandbox image bootstrap
-5. Common sandbox image bootstrap (`openclaw-sandbox-common:bookworm-slim`)
-6. Browser sandbox image bootstrap (`openclaw-sandbox-browser:bookworm-slim`)
-7. **NEW**: Privilege drop via `exec gosu node "$@"` — gateway runs as node (uid 1000)
+3. `.claude-sandbox` dir ownership fix (Sysbox uid remapping makes host uid appear shifted)
+4. **NEW**: Start nested Docker daemon (`dockerd`) — Sysbox auto-provisions `/var/lib/docker`
+5. Default sandbox image bootstrap
+6. Common sandbox image bootstrap (`openclaw-sandbox-common:bookworm-slim`)
+7. Browser sandbox image bootstrap (`openclaw-sandbox-browser:bookworm-slim`)
+8. Claude sandbox image build (`openclaw-sandbox-claude:bookworm-slim` layered on common via `docker build`)
+9. **NEW**: Privilege drop via `exec gosu node "$@"` — gateway runs as node (uid 1000)
 
 > **Important:** The compose override must also be updated to use `user: "0:0"` and add `/var/log` tmpfs. See section E.3a below.
 
@@ -130,6 +132,18 @@ if [ -f "$config_file" ]; then
   if [ "$current_perms" != "600" ]; then
     chmod 600 "$config_file"
     echo "[entrypoint] Fixed openclaw.json permissions: ${current_perms} -> 600"
+  fi
+fi
+
+# ── 1c. Fix .claude-sandbox dir ownership (Sysbox uid remapping) ────
+# Sandbox credentials dir: host bind mount arrives with host uid which Sysbox remaps.
+# Chown to node (1000) so sandbox containers (via binds) can access it.
+claude_dir="/home/node/.claude-sandbox"
+if [ -d "$claude_dir" ]; then
+  dir_owner=$(stat -c '%u' "$claude_dir" 2>/dev/null)
+  if [ "$dir_owner" != "1000" ]; then
+    chown -R 1000:1000 "$claude_dir"
+    echo "[entrypoint] Fixed .claude-sandbox ownership: ${dir_owner} -> 1000"
   fi
 fi
 
@@ -202,6 +216,18 @@ if command -v dockerd > /dev/null 2>&1; then
     else
       echo "[entrypoint] Browser sandbox image already exists"
     fi
+
+    # Build claude sandbox image if missing (layered on common with Claude Code CLI)
+    # This is a separate image so common stays clean — only claude sandbox has the CLI
+    if ! docker image inspect openclaw-sandbox-claude:bookworm-slim > /dev/null 2>&1; then
+      if docker image inspect openclaw-sandbox-common:bookworm-slim > /dev/null 2>&1; then
+        echo "[entrypoint] Claude sandbox image not found, building..."
+        printf 'FROM openclaw-sandbox-common:bookworm-slim\nUSER root\nRUN npm install -g @anthropic-ai/claude-code\nUSER 1000\n' | docker build -t openclaw-sandbox-claude:bookworm-slim -
+        echo "[entrypoint] Claude sandbox image built successfully"
+      fi
+    else
+      echo "[entrypoint] Claude sandbox image already exists"
+    fi
   fi
 else
   echo "[entrypoint] Docker not installed, skipping sandbox bootstrap"
@@ -240,6 +266,14 @@ sudo -u openclaw sed -i 's|/tmp:size=500M,mode=1777|/tmp:size=1G,mode=1777|' "$C
 sudo -u openclaw sed -i '/\/run:size=100M,mode=755/a\      - /var/log:size=100M,mode=755' "$COMPOSE_FILE"
 
 echo "Updated compose: user=0:0, read_only=false, added /var/log tmpfs"
+
+# Add .claude-sandbox bind mount for sandbox-specific credentials
+# Gateway keeps its own /home/node/.claude (not bind-mounted here).
+# Sandboxes get /home/openclaw/.claude-sandbox → /home/node/.claude-sandbox → /home/linuxbrew/.claude (via openclaw.json binds).
+grep -q '/home/openclaw/.claude-sandbox' "$COMPOSE_FILE" || \
+  sudo -u openclaw sed -i '/entrypoint-gateway.sh:ro/a\      # Claude Code sandbox credentials (isolated from gateway creds, shared with sandboxes via openclaw.json binds)\n      - /home/openclaw/.claude-sandbox:/home/node/.claude-sandbox' "$COMPOSE_FILE"
+
+echo "Added .claude-sandbox bind mount"
 ```
 
 Key changes:
@@ -248,12 +282,13 @@ Key changes:
 - `/var/log` tmpfs — dockerd writes logs to `/var/log/dockerd.log`
 - `/tmp` increased to 1G — sandbox builds use temp space
 - `no-new-privileges:true` kept — gosu drops privileges, doesn't gain
+- `/home/openclaw/.claude-sandbox:/home/node/.claude-sandbox` — Sandbox-specific Claude Code credentials, isolated from gateway's own `.claude` dir. Shared with sandbox containers via `binds` in `openclaw.json`
 
 ---
 
 ## E.4 Update openclaw.json with Sandbox and Browser Config
 
-Add `agents` and `tools` blocks to enable rich sandboxes and browser support. The config uses `openclaw-sandbox-common:bookworm-slim` as the default sandbox image (includes Node.js, git, dev tools) and enables the browser tool with Chromium + noVNC.
+Add `agents` and `tools` blocks to enable rich sandboxes and browser support. The config uses `openclaw-sandbox-claude:bookworm-slim` as the default sandbox image (layered on common, adds Claude Code CLI) and enables the browser tool with Chromium + noVNC.
 
 > **Important:** This replaces the existing `openclaw.json`. Make sure to use the correct variant for your networking option (Cloudflare Tunnel or Caddy).
 
@@ -266,16 +301,24 @@ Follow section 4.8 in `playbooks/04-vps1-openclaw.md` — it now includes the `a
         "mode": "all",
         "scope": "agent",
         "docker": {
-          "image": "openclaw-sandbox-common:bookworm-slim",
+          "image": "openclaw-sandbox-claude:bookworm-slim",
           "network": "bridge",
           "memory": "1g",
-          "cpus": 1
+          "cpus": 1,
+          "tmpfs": ["/tmp", "/var/tmp", "/run", "/home/linuxbrew:uid=1000,gid=1000"],
+          "binds": [
+            "/home/node/.claude-sandbox:/home/linuxbrew/.claude"
+          ]
         },
         "browser": {
           "enabled": true,
           "image": "openclaw-sandbox-browser:bookworm-slim",
           "headless": false,
           "enableNoVnc": true
+        },
+        "prune": {
+          "idleHours": 168,
+          "maxAgeDays": 60
         }
       }
     }
@@ -293,6 +336,9 @@ Follow section 4.8 in `playbooks/04-vps1-openclaw.md` — it now includes the `a
 Key decisions:
 - `mode: "all"` — all agents (including main) run in sandboxes. Requires Docker installed inside the container (patch #5 in build script).
 - `network: "bridge"` — required for browser CDP connectivity. `"none"` breaks browser tool (gateway can't resolve CDP port). Sandbox containers are already double-isolated inside Sysbox nested Docker.
+- `tmpfs: ["/home/linuxbrew:uid=1000,gid=1000"]` — makes sandbox home dir writable (for `~/.claude.json` etc.) while keeping root filesystem read-only. The `uid=1000,gid=1000` options ensure the linuxbrew user can write. The `.claude` bind mount sits on top of the tmpfs.
+- `binds: ["/home/node/.claude-sandbox:/home/linuxbrew/.claude"]` — sandbox credentials are isolated from gateway's own `.claude` dir. User authorizes Claude once in a sandbox and creds persist on host.
+- `prune: {idleHours: 168, maxAgeDays: 60}` — sandbox containers kept alive for 7 days idle / 60 days max. Longer prune times avoid repeatedly rebuilding sandbox state.
 - `"browser"` is NOT in the deny list so sandbox agents can use browser tools
 - noVNC is enabled for visual browser access through the Control UI
 
@@ -332,11 +378,11 @@ sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker compose up -d ope
 
 # Monitor the first boot — expect 3-5 minutes for all sandbox images to build
 echo "Monitoring gateway startup (Ctrl+C to stop)..."
-echo "First boot builds 3 images: openclaw-sandbox, openclaw-sandbox-common, openclaw-sandbox-browser"
+echo "First boot builds 4 images: openclaw-sandbox, openclaw-sandbox-common, openclaw-sandbox-browser, openclaw-sandbox-claude"
 sudo docker logs -f openclaw-gateway 2>&1 | grep -E '\[entrypoint\]|\[sandbox\]|error|ERROR'
 ```
 
-Wait for all three `"built successfully"` messages before proceeding to verification.
+Wait for all four `"built successfully"` messages before proceeding to verification.
 
 ---
 
@@ -344,7 +390,7 @@ Wait for all three `"built successfully"` messages before proceeding to verifica
 
 ```bash
 #!/bin/bash
-# 1. Check all 3 sandbox images exist inside the nested Docker
+# 1. Check all 4 sandbox images exist inside the nested Docker
 echo "=== Sandbox Images ==="
 sudo docker exec openclaw-gateway docker images | grep -E 'openclaw-sandbox|REPOSITORY'
 
@@ -360,10 +406,17 @@ sudo docker exec openclaw-gateway which ffmpeg && echo "ffmpeg: OK" || echo "ffm
 sudo docker exec openclaw-gateway which convert && echo "imagemagick: OK" || echo "imagemagick: MISSING"
 sudo docker exec openclaw-gateway which gcc && echo "build-essential: OK" || echo "build-essential: MISSING"
 
-# 4. Verify Claude Code CLI
+# 4. Verify Claude Code CLI is in claude sandbox only
 echo ""
 echo "=== Claude Code CLI ==="
-sudo docker exec openclaw-gateway claude --version && echo "claude: OK" || echo "claude: MISSING"
+echo "gateway image:"
+sudo docker exec openclaw-gateway claude --version && echo "  claude in gateway: OK" || echo "  claude in gateway: MISSING"
+echo "claude sandbox:"
+sudo docker exec openclaw-gateway docker run --rm openclaw-sandbox-claude:bookworm-slim claude --version && echo "  claude in claude-sandbox: OK" || echo "  claude in claude-sandbox: MISSING"
+echo "common sandbox (should NOT have claude):"
+sudo docker exec openclaw-gateway docker run --rm openclaw-sandbox-common:bookworm-slim which claude > /dev/null 2>&1 && echo "  UNEXPECTED: claude found in common" || echo "  claude NOT in common: OK"
+echo "browser sandbox (should NOT have claude):"
+sudo docker exec openclaw-gateway docker run --rm openclaw-sandbox-browser:bookworm-slim which claude > /dev/null 2>&1 && echo "  UNEXPECTED: claude found in browser" || echo "  claude NOT in browser: OK"
 
 # 5. Check openclaw.json permissions
 echo ""
@@ -409,6 +462,7 @@ sudo docker exec openclaw-gateway su -s /bin/sh node -c "docker info > /dev/null
 REPOSITORY                    TAG              SIZE
 openclaw-sandbox              bookworm-slim    ~150MB
 openclaw-sandbox-common       bookworm-slim    ~500MB
+openclaw-sandbox-claude       bookworm-slim    ~600MB
 openclaw-sandbox-browser      bookworm-slim    ~800MB
 
 === Gateway Packages ===
@@ -417,7 +471,14 @@ imagemagick: OK
 build-essential: OK
 
 === Claude Code CLI ===
-claude: OK
+gateway image:
+  claude in gateway: OK
+claude sandbox:
+  claude in claude-sandbox: OK
+common sandbox (should NOT have claude):
+  claude NOT in common: OK
+browser sandbox (should NOT have claude):
+  claude NOT in browser: OK
 
 === Config Permissions ===
 600

@@ -4,11 +4,15 @@
 # Patches applied (each auto-skips when upstream fixes the issue):
 #   1. Dockerfile: copy extension package.json before pnpm install (upstream #7201)
 #   2. OTEL extension: fix @opentelemetry v2.x API changes (upstream #3201)
+#      a. Resource -> resourceFromAttributes (@opentelemetry/resources v2.x)
+#      b. LoggerProvider constructor-based processors (@opentelemetry/sdk-logs v0.211+)
 #
 # Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 set -euo pipefail
 
 cd /home/openclaw/openclaw
+
+OTEL_SERVICE="extensions/diagnostics-otel/src/service.ts"
 
 # ── 1. Patch Dockerfile for extension deps (upstream #7201) ──────────
 if ! grep -q "extensions/diagnostics-otel/package.json" Dockerfile; then
@@ -19,11 +23,54 @@ else
 fi
 
 # ── 2. Patch OTEL v2.x API compat (upstream #3201) ──────────────────
-if grep -q "new Resource(" extensions/diagnostics-otel/src/service.ts 2>/dev/null; then
-  echo "[build] Applying OTEL v2.x compatibility patch (upstream #3201)..."
-  patch -p1 < /home/openclaw/patches/otel-v2-compat.patch
+if grep -q "new Resource(" "$OTEL_SERVICE" 2>/dev/null; then
+  echo "[build] Patching OTEL v2.x API: Resource -> resourceFromAttributes..."
+  # 2a. Import: Resource -> resourceFromAttributes
+  sed -i 's/import { Resource } from "@opentelemetry\/resources";/import { resourceFromAttributes } from "@opentelemetry\/resources";/' "$OTEL_SERVICE"
+  # 2b. Usage: new Resource( -> resourceFromAttributes(
+  sed -i 's/const resource = new Resource(/const resource = resourceFromAttributes(/' "$OTEL_SERVICE"
 else
-  echo "[build] OTEL v2.x patch not needed (upstream fixed or already patched)"
+  echo "[build] OTEL Resource patch not needed (upstream fixed or already patched)"
+fi
+
+if grep -q "addLogRecordProcessor" "$OTEL_SERVICE" 2>/dev/null; then
+  echo "[build] Patching OTEL v2.x API: LoggerProvider constructor-based processors..."
+  # 2c. LoggerProvider: move processor from addLogRecordProcessor() to constructor
+  python3 -c "
+import sys
+with open('$OTEL_SERVICE', 'r') as f:
+    content = f.read()
+old = '''        logProvider = new LoggerProvider({ resource });
+        logProvider.addLogRecordProcessor(
+          new BatchLogRecordProcessor(
+            logExporter,
+            typeof otel.flushIntervalMs === \"number\"
+              ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
+              : {},
+          ),
+        );'''
+new = '''        logProvider = new LoggerProvider({
+          resource,
+          logRecordProcessors: [
+            new BatchLogRecordProcessor(
+              logExporter,
+              typeof otel.flushIntervalMs === \"number\"
+                ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
+                : {},
+            ),
+          ],
+        });'''
+if old in content:
+    content = content.replace(old, new)
+    with open('$OTEL_SERVICE', 'w') as f:
+        f.write(content)
+    print('[build] LoggerProvider patch applied')
+else:
+    print('[build] WARNING: LoggerProvider pattern not found (upstream may have changed)')
+    sys.exit(1)
+"
+else
+  echo "[build] OTEL LoggerProvider patch not needed (upstream fixed or already patched)"
 fi
 
 # ── 3. Build image ───────────────────────────────────────────────────

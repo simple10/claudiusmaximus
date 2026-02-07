@@ -1,32 +1,19 @@
---- a/extensions/diagnostics-otel/src/service.ts
-+++ b/extensions/diagnostics-otel/src/service.ts
-@@ -1,6 +1,6 @@
--import { Resource } from "@opentelemetry/resources";
-+import { resourceFromAttributes } from "@opentelemetry/resources";
-
--const resource = new Resource({
-+const resource = resourceFromAttributes({
-
---- a/extensions/diagnostics-otel/src/service.ts
-+++ b/extensions/diagnostics-otel/src/service.ts
-@@ -1,8 +1,12 @@
--        logProvider = new LoggerProvider({ resource });
--        logProvider.addLogRecordProcessor(
--          new BatchLogRecordProcessor(
--            logExporter,
--            typeof otel.flushIntervalMs === "number"
--              ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
--              : {},
--          ),
--        );
-+        logProvider = new LoggerProvider({
-+          resource,
-+          logRecordProcessors: [
-+            new BatchLogRecordProcessor(
-+              logExporter,
-+              typeof otel.flushIntervalMs === "number"
-+                ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
-+                : {},
-+            ),
-+          ],
-+        });
+# OTEL v2.x API Compatibility Patch (upstream #3201)
+#
+# This file documents the patches applied by scripts/build-openclaw.sh.
+# The build script applies these changes inline (sed + python3) rather than
+# using `patch` because the upstream file changes frequently and unified diffs
+# with fixed line numbers are fragile.
+#
+# Patch 1: @opentelemetry/resources v2.x removed the Resource class
+#   - import { Resource } from "@opentelemetry/resources"
+#   + import { resourceFromAttributes } from "@opentelemetry/resources"
+#   - const resource = new Resource({
+#   + const resource = resourceFromAttributes({
+#
+# Patch 2: @opentelemetry/sdk-logs v0.211+ removed addLogRecordProcessor()
+#   - logProvider = new LoggerProvider({ resource });
+#   - logProvider.addLogRecordProcessor(new BatchLogRecordProcessor(...));
+#   + logProvider = new LoggerProvider({ resource, logRecordProcessors: [...] });
+#
+# Both patches auto-skip when upstream fixes #3201.

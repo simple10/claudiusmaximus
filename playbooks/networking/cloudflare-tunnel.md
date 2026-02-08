@@ -1,6 +1,6 @@
 # Cloudflare Tunnel Setup
 
-Secure OpenClaw and Grafana behind Cloudflare Tunnel with zero exposed ports.
+Secure OpenClaw behind Cloudflare Tunnel with zero exposed ports.
 
 > **No SSL certificates required!** Cloudflare Tunnel handles TLS automatically.
 > You only need a Cloudflare account with your domain's DNS managed by Cloudflare.
@@ -9,8 +9,8 @@ Secure OpenClaw and Grafana behind Cloudflare Tunnel with zero exposed ports.
 
 This playbook configures:
 
-- cloudflared installation on both VPSs
-- Tunnels for OpenClaw (VPS-1) and Grafana (VPS-2)
+- cloudflared installation on VPS-1
+- Tunnel for OpenClaw gateway
 - DNS routing through Cloudflare
 - Port 443 removal from firewall
 - Optional: Cloudflare Access authentication
@@ -26,7 +26,7 @@ This playbook configures:
 
 ## Prerequisites
 
-- All core playbooks (01-05) completed
+- Core playbooks (01, 03, 04) completed on VPS-1
 - Cloudflare account with your domain added
 - Domain DNS managed by Cloudflare
 - SSH access as `adminclaw` on port 222
@@ -36,36 +36,34 @@ This playbook configures:
 From `../openclaw-config.env`:
 
 - `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., openclaw.example.com)
-- `DOMAIN_GRAFANA` - Domain for Grafana (e.g., observe.example.com)
-- `SUBPATH_OPENCLAW` - URL subpath for OpenClaw (default: `/_openclaw`)
-- `SUBPATH_GRAFANA` - URL subpath for Grafana (default: `/_observe/grafana`)
+- `SUBPATH_OPENCLAW` - URL subpath for OpenClaw (default: empty for root)
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────-────┐
-│                         Internet                             │
-│                                                              │
-│    User ──► openclaw.example.com ──► Cloudflare Edge         │
-│                                        │                     │
-│                              Cloudflare Access               │
-│                                  (auth check)                │
-│                                        │                     │
-└────────────────────────────────────────┼─────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                         Internet                              │
+│                                                               │
+│    User ──► openclaw.example.com ──► Cloudflare Edge          │
+│                                        │                      │
+│                              Cloudflare Access                │
+│                                  (auth check)                 │
+│                                        │                      │
+└────────────────────────────────────────┼──────────────────────┘
                                          │
                         Encrypted Tunnel (outbound)
                                          │
-┌────────────────────────────────────────┼─────────────────────┐
-│  VPS-1 (Origin - No inbound ports needed)                    │
-│                                        │                     │
-│    cloudflared ◄───────────────────────┘                     │
-│        │                                                     │
-│        ▼                                                     │
-│    localhost:18789 (OpenClaw Gateway)                        │
-│                                                              │
-│    Port 443: CLOSED                                          │
-│    Port 80:  CLOSED                                          │
-└──────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────┼──────────────────────┐
+│  VPS-1 (Origin - No inbound ports needed)                     │
+│                                        │                      │
+│    cloudflared ◄───────────────────────┘                      │
+│        │                                                      │
+│        ▼                                                      │
+│    localhost:18789 (OpenClaw Gateway)                         │
+│                                                               │
+│    Port 443: CLOSED                                           │
+│    Port 80:  CLOSED                                           │
+└───────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -142,7 +140,7 @@ cloudflared tunnel route dns openclaw <DOMAIN_OPENCLAW>
 
 **Important:** This creates a CNAME record pointing to the tunnel. In Cloudflare Dashboard, you should see:
 
-- `<DOMAIN_OPENCLAW>` → `CNAME` → `<tunnel-id>.cfargotunnel.com` (Proxied)
+- `<DOMAIN_OPENCLAW>` -> `CNAME` -> `<tunnel-id>.cfargotunnel.com` (Proxied)
 
 ### Step 6: Test the Tunnel
 
@@ -195,97 +193,14 @@ sudo docker volume rm caddy_data caddy_config 2>/dev/null || true
 
 ---
 
-## VPS-2 Setup (Grafana)
-
-Repeat similar steps for VPS-2 with Grafana.
-
-### Step 1: Install cloudflared
-
-```bash
-ssh -p 222 adminclaw@<VPS2_IP>
-
-curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-sudo dpkg -i cloudflared.deb
-rm cloudflared.deb
-
-cloudflared --version
-```
-
-### Step 2: Authenticate with Cloudflare
-
-```bash
-cloudflared tunnel login
-```
-
-### Step 3: Create the Tunnel
-
-```bash
-cloudflared tunnel create observe
-
-# Note the tunnel ID
-```
-
-### Step 4: Configure the Tunnel
-
-```bash
-sudo mkdir -p /etc/cloudflared
-
-# Replace <DOMAIN_GRAFANA> with your domain
-sudo tee /etc/cloudflared/config.yml << 'EOF'
-tunnel: observe
-credentials-file: /etc/cloudflared/credentials.json
-
-ingress:
-  # Grafana dashboard
-  - hostname: <DOMAIN_GRAFANA>
-    service: http://localhost:3000
-    originRequest:
-      noTLSVerify: true
-
-  # Catch-all rule (required)
-  - service: http_status:404
-EOF
-
-sudo cp ~/.cloudflared/<TUNNEL_ID>.json /etc/cloudflared/credentials.json
-sudo chmod 600 /etc/cloudflared/credentials.json
-```
-
-### Step 5: Configure DNS
-
-```bash
-cloudflared tunnel route dns observe <DOMAIN_GRAFANA>
-```
-
-### Step 6: Test and Install Service
-
-```bash
-# Test
-cloudflared tunnel run observe
-
-# Install as service
-sudo cloudflared service install
-sudo systemctl enable cloudflared
-sudo systemctl start cloudflared
-```
-
-### Step 7: Remove Port 443 and Caddy
-
-```bash
-sudo ufw delete allow 443/tcp
-sudo docker stop caddy 2>/dev/null || true
-sudo docker rm caddy 2>/dev/null || true
-```
-
----
-
 ## Cloudflare Access Configuration (Optional)
 
 Add authentication via Cloudflare Access for additional security.
 
 ### In Cloudflare Dashboard
 
-1. Go to **Zero Trust** → **Access** → **Applications**
-2. Click **Add an application** → **Self-hosted**
+1. Go to **Zero Trust** -> **Access** -> **Applications**
+2. Click **Add an application** -> **Self-hosted**
 3. Configure:
    - **Application name:** OpenClaw
    - **Session duration:** 24 hours
@@ -297,9 +212,7 @@ Add authentication via Cloudflare Access for additional security.
    - **Action:** Allow
    - **Include:**
      - Emails: `your-email@example.com`
-     - Or: Login Methods → GitHub/Google
-
-5. Repeat for Grafana domain
+     - Or: Login Methods -> GitHub/Google
 
 ### Test Access Protection
 
@@ -311,8 +224,6 @@ Add authentication via Cloudflare Access for additional security.
 ---
 
 ## Verification
-
-### VPS-1
 
 ```bash
 # Check tunnel service
@@ -329,16 +240,6 @@ curl -s https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/ | head -5
 
 # Verify direct IP access fails
 curl -sk --connect-timeout 5 https://<VPS1_IP>/ || echo "Direct access blocked (expected)"
-```
-
-### VPS-2
-
-```bash
-# Check tunnel service
-sudo systemctl status cloudflared
-
-# Test external access
-curl -s https://<DOMAIN_GRAFANA>/ | head -5
 ```
 
 ---
@@ -411,7 +312,7 @@ sudo systemctl restart cloudflared
 
 ### Viewing Tunnel Metrics
 
-Cloudflare Dashboard → Zero Trust → Networks → Tunnels → (your tunnel) → Metrics
+Cloudflare Dashboard -> Zero Trust -> Networks -> Tunnels -> (your tunnel) -> Metrics
 
 ### Rotating Tunnel Credentials
 
@@ -448,14 +349,6 @@ After completing setup, verify:
 
 ## Related Files
 
-### VPS-1 (OpenClaw)
-
-- `/etc/cloudflared/config.yml` - Tunnel configuration
-- `/etc/cloudflared/credentials.json` - Tunnel credentials
-- `~/.cloudflared/cert.pem` - Cloudflare account certificate
-
-### VPS-2 (Observe)
-
 - `/etc/cloudflared/config.yml` - Tunnel configuration
 - `/etc/cloudflared/credentials.json` - Tunnel credentials
 - `~/.cloudflared/cert.pem` - Cloudflare account certificate
@@ -464,4 +357,4 @@ After completing setup, verify:
 
 Tunnels can be migrated to dashboard management for easier configuration:
 
-**Cloudflare Dashboard** → **Zero Trust** → **Networks** → **Tunnels**
+**Cloudflare Dashboard** -> **Zero Trust** -> **Networks** -> **Tunnels**

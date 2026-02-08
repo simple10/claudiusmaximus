@@ -1,0 +1,7 @@
+{
+  "name": "log-receiver",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-02-06"
+  // Secrets (set via `wrangler secret put`):
+  //   AUTH_TOKEN — token Vector uses to authenticate to this worker
+}

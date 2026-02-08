@@ -1,0 +1,22 @@
+# Vector configuration — ships Docker container logs to Cloudflare Log Receiver Worker
+# https://vector.dev/docs/
+
+# Collect logs from all Docker containers
+[sources.docker_logs]
+type = "docker_logs"
+
+# Ship to Cloudflare Log Receiver Worker
+[sinks.cloudflare_worker]
+type = "http"
+inputs = ["docker_logs"]
+uri = "${LOG_WORKER_URL}"
+encoding.codec = "json"
+auth.strategy = "bearer"
+auth.token = "${LOG_WORKER_TOKEN}"
+
+[sinks.cloudflare_worker.batch]
+max_bytes = 262144    # 256KB per batch
+timeout_secs = 60     # Ship at least every 60s
+
+[sinks.cloudflare_worker.request]
+retry_max_duration_secs = 300   # Keep retrying for 5 min on failures

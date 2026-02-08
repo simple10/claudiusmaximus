@@ -1,4 +1,4 @@
-# REQUIREMENTS.md — OpenClaw Two-VPS Deployment
+# REQUIREMENTS.md — OpenClaw Single-VPS Deployment
 
 Authoritative reference for the OpenClaw deployment architecture, configuration, and design decisions. Use this as a safety guide when making modifications.
 
@@ -8,22 +8,22 @@ Networking: Cloudflare Tunnel (zero exposed ports, origin IP hidden).
 
 ## 1. Architecture Overview
 
-Two OVHCloud VPS instances connected by a WireGuard tunnel. All inter-VPS traffic is encrypted. External access is via Cloudflare Tunnel (outbound-only connections, no inbound ports exposed).
+Single OVHCloud VPS running the OpenClaw gateway and sandboxes. Observability is handled by Cloudflare Workers (log ingestion, LLM analytics). External access is via Cloudflare Tunnel (outbound-only connections, no inbound ports exposed).
 
-| VPS | Hostname | Role | WireGuard IP | Public IP |
-|-----|----------|------|--------------|-----------|
-| VPS-1 | `openclaw` | Gateway + Sandboxes | `10.0.0.1` | From `openclaw-config.env` |
-| VPS-2 | `observe` | Observability Stack | `10.0.0.2` | From `openclaw-config.env` |
+| VPS | Hostname | Role | Public IP |
+|-----|----------|------|-----------|
+| VPS-1 | `openclaw` | Gateway + Sandboxes | From `openclaw-config.env` |
 
 **Data flow:**
 - Users -> Cloudflare Edge -> Cloudflare Tunnel -> VPS-1 gateway (port 18789)
-- Users -> Cloudflare Edge -> Cloudflare Tunnel -> VPS-2 Grafana (port 3000)
-- VPS-1 -> WireGuard (10.0.0.0/24) -> VPS-2 (traces, metrics, logs)
-- VPS-2 Prometheus -> WireGuard -> VPS-1 Node Exporter (port 9100)
+- Users -> Cloudflare -> AI Gateway Worker (LLM proxy + analytics)
+- VPS-1 Vector -> Cloudflare Log Receiver Worker (log ingestion)
+- VPS-1 cron -> Telegram API (host alerts)
+- Cloudflare Health Check -> VPS-1 /health (uptime monitoring)
 
 ---
 
-## 2. Common Requirements (Both VPSs)
+## 2. VPS Requirements
 
 ### 2.1 OS & System Packages
 
@@ -33,7 +33,7 @@ Two OVHCloud VPS instances connected by a WireGuard tunnel. All inter-VPS traffi
 ```
 curl wget git vim htop tmux unzip
 ca-certificates gnupg lsb-release apt-transport-https software-properties-common
-ufw fail2ban auditd wireguard wireguard-tools
+ufw fail2ban auditd
 ```
 
 ### 2.2 Two-User Security Model
@@ -92,27 +92,13 @@ The service name is `ssh` on Ubuntu, not `sshd`.
 
 **Default policy:** Deny incoming, Allow outgoing
 
-**Common rules (both VPSs):**
+**Rules:**
 
 | Port | Protocol | Rule | Purpose |
 |------|----------|------|---------|
 | 222 | TCP | Allow | SSH (hardened port) |
-| 51820 | UDP | Allow | WireGuard tunnel |
 
-**VPS-1 additional rules:**
-
-| Port | Protocol | Rule | Purpose |
-|------|----------|------|---------|
-| 9100 | TCP | Allow from 10.0.0.0/24 | Node Exporter (Prometheus scraping via WireGuard) |
-| 18789 | TCP | Allow from 10.0.0.0/24 | Gateway debug endpoint (WireGuard only) |
-
-**VPS-2 additional rules:**
-
-| Rule | Purpose |
-|------|---------|
-| Allow from 10.0.0.0/24 | WireGuard subnet — required for Loki (3100), Tempo OTLP (4318), Prometheus (9090) to receive data from VPS-1 |
-
-**Design decision:** Port 443 is NOT opened on either VPS. Cloudflare Tunnel uses outbound connections only.
+**Design decision:** Port 443 is NOT opened. Cloudflare Tunnel uses outbound connections only. Only SSH is exposed.
 
 **Critical ordering:** Configure UFW rules BEFORE changing SSH port. Changing SSH port before adding the UFW rule causes lockout.
 
@@ -158,30 +144,7 @@ Key parameters:
 - `Remove-Unused-Dependencies: true`
 - `Automatic-Reboot: false` — Manual reboot preferred to avoid unexpected downtime
 
-### 2.8 WireGuard Tunnel
-
-**Purpose:** Encrypted tunnel between VPSs for all monitoring/observability traffic.
-
-| VPS | Interface | Address | Port |
-|-----|-----------|---------|------|
-| VPS-1 | wg0 | 10.0.0.1/24 | 51820/udp |
-| VPS-2 | wg0 | 10.0.0.2/24 | 51820/udp |
-
-**Config file:** `/etc/wireguard/wg0.conf` (chmod 600)
-
-**Key settings:**
-- `PersistentKeepalive = 25` — Keeps tunnel alive through NAT (25-second interval)
-- Each VPS has its own private key and the peer's public key
-- `AllowedIPs` restricted to peer's WireGuard IP (`/32`)
-- `Endpoint` set to peer's public IP
-
-**Private key:** `/etc/wireguard/private.key` (chmod 600)
-
-**Service:** `wg-quick@wg0` (systemd, enabled + started)
-
-**Verification:** `sudo wg show` — look for "latest handshake" within 2 minutes
-
-### 2.9 Docker
+### 2.8 Docker
 
 **Package:** Docker CE from official Docker apt repository
 
@@ -214,7 +177,7 @@ Key parameters:
 | `no-new-privileges: true` | Prevent container privilege escalation |
 | `nofile: 65536` | Increase file descriptor limits for stability |
 
-### 2.10 Cloudflare Tunnel
+### 2.9 Cloudflare Tunnel
 
 **Purpose:** Zero exposed ports, origin IP hidden, built-in DDoS protection.
 
@@ -228,10 +191,6 @@ Key parameters:
 **VPS-1 tunnel:** Named `openclaw`
 - Routes `DOMAIN_OPENCLAW` -> `http://localhost:18789` (gateway)
 - `originRequest.noTLSVerify: true` (local HTTP, TLS at Cloudflare edge)
-
-**VPS-2 tunnel:** Named `observe`
-- Routes `DOMAIN_GRAFANA` -> `http://localhost:3000` (Grafana)
-- `originRequest.noTLSVerify: true`
 
 **Config:** `/etc/cloudflared/config.yml`
 **Credentials:** `/etc/cloudflared/credentials.json` (chmod 600)
@@ -261,7 +220,7 @@ Key parameters:
 
 | Network | Subnet | Driver | Flags | Purpose |
 |---------|--------|--------|-------|---------|
-| `openclaw-gateway-net` | `172.30.0.0/24` | bridge | external: true | Gateway, cloudflared, Node Exporter, Promtail |
+| `openclaw-gateway-net` | `172.30.0.0/24` | bridge | external: true | Gateway, cloudflared, Vector |
 | `openclaw-sandbox-net` | `172.31.0.0/24` | bridge | internal: true | Agent sandboxes (no outbound internet) |
 
 **Design decision:** Subnets use `172.30.x.x` and `172.31.x.x` to avoid conflicts with Docker's default `172.17.0.0/16` range.
@@ -276,8 +235,9 @@ Key parameters:
 │   ├── docker-compose.yml       # Original from upstream
 │   ├── docker-compose.override.yml  # Our customizations
 │   ├── .env                     # Environment variables
-│   ├── promtail-config.yml      # Promtail configuration
-│   ├── promtail-positions/      # Persistent Promtail state
+│   ├── vector.toml              # Vector log shipper configuration
+│   ├── data/
+│   │   └── vector/              # Vector checkpoint/position data
 │   └── scripts/
 │       └── entrypoint-gateway.sh  # Custom entrypoint
 ├── .openclaw/                   # Gateway config & state (owned by uid 1000)
@@ -288,7 +248,8 @@ Key parameters:
 │   └── backups/
 ├── .claude-sandbox/             # Sandbox Claude Code credentials (isolated from gateway)
 └── scripts/
-    └── build-openclaw.sh        # Build script with auto-patching
+    ├── build-openclaw.sh        # Build script with auto-patching
+    └── host-alert.sh            # Cron alerter: disk/memory/CPU -> Telegram
 ```
 
 **Ownership:**
@@ -334,7 +295,6 @@ node dist/index.js gateway --allow-unconfigured --bind lan --port 18789
 - `ANTHROPIC_API_KEY` — From `.env`
 - `TELEGRAM_BOT_TOKEN` — From `.env` (optional)
 - `TZ=UTC`
-- OTEL per-signal endpoints (see 3.8)
 
 ### 3.5 Entrypoint Script (`scripts/entrypoint-gateway.sh`)
 
@@ -355,25 +315,26 @@ Runs as root inside container (Sysbox isolation). Performs pre-start tasks in or
 
 **Usage:** `sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh`
 
-Patches upstream Dockerfile and source in-place before `docker build`, then `git checkout` restores the working tree. Each patch auto-skips when upstream fixes the issue (guard checks via `grep` run before patching).
+Patches upstream Dockerfile in-place before `docker build`, then `git checkout` restores the working tree. Each patch auto-skips when upstream fixes the issue (guard checks via `grep` run before patching).
 
 **Patches applied:**
 
 | # | Target | Issue | Fix |
 |---|--------|-------|-----|
-| 1 | Dockerfile | Extension deps not installed (upstream runs `pnpm install` before `COPY . .`) | Insert `COPY extensions/diagnostics-otel/package.json` before pnpm install |
-| 2a | OTEL extension | `@opentelemetry/resources` v2.x removed `new Resource()` | Use `resourceFromAttributes()` instead |
-| 2b | OTEL extension | `@opentelemetry/sdk-logs` v0.211+ removed `addLogRecordProcessor()` | Pass `logRecordProcessors: [...]` in `LoggerProvider` constructor |
-| 3 | `src/infra/diagnostic-events.ts` | Dual-bundle problem: `listeners` Set duplicated across gateway and plugin-sdk bundles | Use `globalThis.__OPENCLAW_DIAG_LISTENERS__` for shared Set |
-| 4 | Dockerfile | Claude Code CLI needed in gateway image | `RUN npm install -g @anthropic-ai/claude-code` before `USER node` |
-| 5 | Dockerfile | Docker + gosu needed for nested Docker (sandbox isolation) | `RUN apt-get install docker.io gosu && usermod -aG docker node` before `USER node` |
+| 1 | Dockerfile | Claude Code CLI needed in gateway image | `RUN npm install -g @anthropic-ai/claude-code` before `USER node` |
+| 2 | Dockerfile | Docker + gosu needed for nested Docker (sandbox isolation) | `RUN apt-get install docker.io gosu && usermod -aG docker node` before `USER node` |
 
-**Critical constraint:** Patches 4 and 5 MUST be inserted before `USER node` in the Dockerfile. After `USER node`, npm and apt can't write to system directories (EACCES).
+**Critical constraint:** Both patches MUST be inserted before `USER node` in the Dockerfile. After `USER node`, npm and apt can't write to system directories (EACCES).
 
 **Build args:**
 - `OPENCLAW_DOCKER_APT_PACKAGES` — Extra apt packages for gateway image (e.g., `"ffmpeg build-essential imagemagick"`)
 
-**Gotcha:** If build fails, `git checkout` (cleanup step) doesn't run. Next build sees old patches and may skip. Fix: manually `git checkout -- Dockerfile extensions/ src/infra/diagnostic-events.ts` before retrying.
+**Cleanup step:**
+```bash
+git checkout -- Dockerfile 2>/dev/null || true
+```
+
+**Gotcha:** If build fails, `git checkout` (cleanup step) doesn't run. Next build sees old patches and may skip. Fix: manually `git checkout -- Dockerfile` before retrying.
 
 ### 3.7 openclaw.json Configuration
 
@@ -394,25 +355,6 @@ Patches upstream Dockerfile and source in-place before `docker build`, then `git
     "trustedProxies": ["172.30.0.1"],
     "controlUi": {
       "basePath": "<SUBPATH_OPENCLAW>"
-    }
-  },
-  "plugins": {
-    "allow": ["diagnostics-otel"],
-    "entries": {
-      "diagnostics-otel": { "enabled": true }
-    }
-  },
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "protocol": "http/protobuf",
-      "serviceName": "openclaw-gateway",
-      "traces": true,
-      "metrics": true,
-      "logs": true,
-      "sampleRate": 0.2,
-      "flushIntervalMs": 20000
     }
   },
   "agents": {
@@ -474,8 +416,7 @@ Patches upstream Dockerfile and source in-place before `docker build`, then `git
 | `commands.restart: true` | Agents can modify config and trigger in-process restart via SIGUSR1 |
 | `trustedProxies: ["172.30.0.1"]` | cloudflared connects via Docker bridge gateway IP. Only exact IPs work — CIDR ranges NOT supported by `isTrustedProxyAddress()` |
 | `controlUi.basePath` | URL prefix for Control UI, set from `SUBPATH_OPENCLAW` in config |
-| No `otel.endpoint` field | **Critical.** Setting `endpoint` forces all signals to one destination, overriding env vars. Per-signal env vars only work when `endpoint` is absent |
-| `sandbox.mode: "all"` | All agents run in Docker sandboxes. Requires Docker installed inside container (build patch #5). Without Docker, `spawn docker` crashes with EACCES. Fallback: `"non-main"` |
+| `sandbox.mode: "all"` | All agents run in Docker sandboxes. Requires Docker installed inside container (build patch #2). Without Docker, `spawn docker` crashes with EACCES. Fallback: `"non-main"` |
 | `sandbox.docker.network: "bridge"` | Required for browser tool. `"none"` breaks CDP connectivity (gateway can't reach port 9222 in sandbox) |
 | `tmpfs /home/linuxbrew:uid=1000,gid=1000` | Makes sandbox home writable for `~/.claude.json`. The `:uid=1000,gid=1000` is critical — without it, tmpfs mounts as root-owned and linuxbrew user can't write |
 | `readOnlyRoot: true` | Sandbox filesystem is read-only for security. Home dir writable via tmpfs overlay |
@@ -483,27 +424,7 @@ Patches upstream Dockerfile and source in-place before `docker build`, then `git
 | `capDrop: ["ALL"]` | Drop all Linux capabilities in sandboxes — minimal privilege |
 | `binds` on sandbox | Mounts gateway's `.claude-sandbox` credentials into sandbox home |
 
-### 3.8 OTEL Per-Signal Routing
-
-**Design decision:** Each signal goes to its dedicated backend via separate environment variables. Do NOT use a unified `endpoint` in openclaw.json.
-
-**Environment variables** (set in `docker-compose.override.yml` and `.env`):
-
-| Variable | Value | Backend |
-|----------|-------|---------|
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `http://10.0.0.2:4318/v1/traces` | Tempo |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://10.0.0.2:9090/api/v1/otlp/v1/metrics` | Prometheus |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://10.0.0.2:3100/otlp/v1/logs` | Loki |
-
-**Critical details:**
-- Per-signal env vars contain the **full URL** (SDK does not append path). The base env var (`OTEL_EXPORTER_OTLP_ENDPOINT`) appends `/v1/traces` etc., but per-signal vars do not.
-- If `otel.endpoint` is set in openclaw.json, the plugin passes explicit `url` to each exporter, which overrides env vars. Must be removed for env vars to work.
-- OTEL data only appears when gateway has actual activity (model calls, webhooks, webchat messages). An idle gateway produces no metrics/traces/logs.
-- The `agent` CLI bypasses the dispatch system — only webchat/channel messages generate traces.
-
-**Plugin behavior:** The diagnostics-otel plugin only logs `"logs exporter enabled (OTLP/HTTP)"`. There are NO log messages for trace or metrics exporters. All three ARE initialized when enabled. Don't assume missing log = missing exporter.
-
-### 3.9 Sandbox Images
+### 3.8 Sandbox Images
 
 Four images built during first boot by the entrypoint script:
 
@@ -523,7 +444,7 @@ printf 'FROM openclaw-sandbox-common:bookworm-slim\nUSER root\nRUN npm install -
 - Do NOT use `docker build -f - /dev/null` — nested Docker (Sysbox) rejects `/dev/null` as build context. Use `printf ... | docker build -t tag -` instead.
 - Do NOT use `docker run`/`docker commit` to mutate images — creates a dirty layer. Use `docker build` with proper FROM layer.
 
-### 3.10 Claude Code in Sandboxes
+### 3.9 Claude Code in Sandboxes
 
 **Credential isolation:** Sandboxes use `/home/openclaw/.claude-sandbox` (NOT gateway's `/home/openclaw/.claude`). Gateway credentials are device-bound OAuth tokens that don't work across containers. Sandbox gets its own credentials via `claude login` (one-time setup).
 
@@ -536,32 +457,111 @@ printf 'FROM openclaw-sandbox-common:bookworm-slim\nUSER root\nRUN npm install -
 
 **Sysbox uid remapping fix:** Host uid 1000 appears as uid 1002 inside gateway. Entrypoint runs `chown -R 1000:1000 /home/node/.claude-sandbox` to fix this before gosu drops privileges.
 
-### 3.11 Promtail (Log Shipping)
+### 3.10 Vector (Log Shipping)
 
-**Image:** `grafana/promtail:latest`
-**Container name:** `promtail`
-**Network:** host
+**Image:** `timberio/vector:0.43.1-alpine`
+**Container name:** `vector`
+**Network:** `openclaw-gateway-net`
 
-**Config file:** `/home/openclaw/openclaw/promtail-config.yml`
+**Config file:** `/home/openclaw/openclaw/vector.toml` (bind mounted to `/etc/vector/vector.toml:ro`)
 
-**Loki endpoint:** `http://10.0.0.2:3100/loki/api/v1/push` (VPS-2 via WireGuard)
+**Purpose:** Ships Docker container logs to the Cloudflare Log Receiver Worker. Replaces Promtail + Loki from the previous two-VPS architecture.
 
-**Scrape targets:**
-- System logs: `/var/log/*log` (labels: `job=varlogs`, `host=openclaw`)
-- Docker container logs: `/var/lib/docker/containers/*/*-json.log` (labels: `job=docker`, `host=openclaw`)
+**Container definition (docker-compose.override.yml):**
 
-**Persistent state:** `./promtail-positions/` bind mount prevents re-shipping logs after container restart.
+```yaml
+vector:
+  image: timberio/vector:0.43.1-alpine
+  container_name: vector
+  restart: always
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - ./vector.toml:/etc/vector/vector.toml:ro
+    - ./data/vector:/var/lib/vector
+  environment:
+    - LOG_WORKER_URL=${LOG_WORKER_URL}
+    - LOG_WORKER_TOKEN=${LOG_WORKER_TOKEN}
+  deploy:
+    resources:
+      limits:
+        cpus: "0.25"
+        memory: 128M
+  networks:
+    - openclaw-gateway-net
+```
 
-### 3.12 Node Exporter
+**Vector config (`vector.toml`):**
 
-**Image:** `prom/node-exporter:latest`
-**Container name:** `node-exporter`
-**Network:** host
-**Port:** 9100
+```toml
+# Collect logs from all Docker containers
+[sources.docker_logs]
+type = "docker_logs"
 
-Exposes host system metrics (CPU, memory, disk, network) for Prometheus on VPS-2 to scrape via WireGuard.
+# Ship to Cloudflare Log Receiver Worker
+[sinks.cloudflare_worker]
+type = "http"
+inputs = ["docker_logs"]
+uri = "${LOG_WORKER_URL}"
+encoding.codec = "json"
+auth.strategy = "bearer"
+auth.token = "${LOG_WORKER_TOKEN}"
 
-### 3.13 Backup
+[sinks.cloudflare_worker.batch]
+max_bytes = 262144    # 256KB per batch
+timeout_secs = 60     # Ship at least every 60s
+
+[sinks.cloudflare_worker.request]
+retry_max_duration_secs = 300   # Keep retrying for 5 min on failures
+```
+
+**Fields per event** (auto-included by `docker_logs` source):
+- `container_name`, `container_id`, `image`
+- `message` (the log line)
+- `stream` (stdout/stderr)
+- `timestamp`
+- `host`
+
+**Checkpoint persistence:** `./data/vector/` stores checkpoint/position data. Survives container restarts, catches up from last position.
+
+**Crash recovery:**
+- Container crashes -> Docker captures stdout/stderr in JSON log files -> Vector catches up from checkpoint
+- Vector crashes -> `restart: always` brings it back -> reads from last checkpoint
+- VPS reboots -> compose `restart: always` -> Vector catches up from persisted checkpoints
+
+**Environment variables required in `.env`:**
+
+| Variable | Purpose |
+|----------|---------|
+| `LOG_WORKER_URL` | Full URL to Log Receiver Worker (e.g., `https://log-receiver.<account>.workers.dev/logs`) |
+| `LOG_WORKER_TOKEN` | Bearer token matching the Worker's `AUTH_TOKEN` secret |
+
+### 3.11 Host Alerter
+
+**Script:** `/home/openclaw/scripts/host-alert.sh`
+**Cron file:** `/etc/cron.d/openclaw-alerts`
+**Cron entry:** `*/15 * * * * root /home/openclaw/scripts/host-alert.sh`
+**Runs as:** root (needs access to system metrics)
+
+**Checks:**
+- Disk usage > 85%
+- Memory usage > 90%
+- Docker daemon health
+- Container crash count
+
+**Alert delivery:** Sends messages via Telegram Bot API:
+```bash
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  -d "chat_id=${TELEGRAM_CHAT_ID}" \
+  -d "text=VPS Alert: Disk usage at 92%"
+```
+
+**State-based alerting:** Only alerts on state *change* (tracks last alert state in a file to avoid spam). Does not re-alert every 15 minutes for the same condition.
+
+**Required configuration:**
+- `TELEGRAM_BOT_TOKEN` — In `openclaw-config.env`
+- `TELEGRAM_CHAT_ID` — In `openclaw-config.env` (the chat/group ID to send alerts to)
+
+### 3.12 Backup
 
 **Script:** `/home/openclaw/scripts/backup.sh`
 **Runs as:** root (via `/etc/cron.d/openclaw-backup`)
@@ -575,7 +575,6 @@ Exposes host system metrics (CPU, memory, disk, network) for Prometheus on VPS-2
 - `.openclaw/credentials/` — API keys, tokens
 - `.openclaw/workspace/` — User workspaces
 - `openclaw/.env` — Environment variables
-- `openclaw/promtail-positions` — Log positions (prevents duplicate ingestion)
 
 **Retention:** 30 days (auto-delete older backups)
 **Output:** `/home/openclaw/.openclaw/backups/openclaw_backup_YYYYMMDD_HHMMSS.tar.gz`
@@ -583,7 +582,7 @@ Exposes host system metrics (CPU, memory, disk, network) for Prometheus on VPS-2
 
 **Cron job location:** `/etc/cron.d/openclaw-backup` (NOT user crontab — user crontab runs as openclaw uid 1002, which can't read uid 1000 files)
 
-### 3.14 Device Pairing & Authentication
+### 3.13 Device Pairing & Authentication
 
 **Flow:**
 1. User opens `https://<DOMAIN>/<SUBPATH>/chat?token=<TOKEN>`
@@ -602,7 +601,7 @@ Exposes host system metrics (CPU, memory, disk, network) for Prometheus on VPS-2
 - Stored in `~/.openclaw/devices/pending.json`
 - Do NOT use `dangerouslyDisableDeviceAuth` — device pairing is defense-in-depth security.
 
-### 3.15 Gateway .env File
+### 3.14 Gateway .env File
 
 **Location:** `/home/openclaw/openclaw/.env`
 
@@ -612,249 +611,112 @@ Exposes host system metrics (CPU, memory, disk, network) for Prometheus on VPS-2
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `TELEGRAM_BOT_TOKEN` | Optional: Telegram integration |
 | `DISCORD_BOT_TOKEN` | Optional: Discord integration |
-| `GRAFANA_PASSWORD` | Auto-generated Grafana admin password |
 | `OPENCLAW_CONFIG_DIR` | `/home/openclaw/.openclaw` |
 | `OPENCLAW_WORKSPACE_DIR` | `/home/openclaw/.openclaw/workspace` |
 | `OPENCLAW_GATEWAY_PORT` | `0.0.0.0:18789` — Must bind all interfaces for tunnel/proxy access |
 | `OPENCLAW_BRIDGE_PORT` | `0.0.0.0:18790` — Bridge API |
 | `OPENCLAW_GATEWAY_BIND` | `lan` |
-| `OTEL_EXPORTER_OTLP_*_ENDPOINT` | Per-signal OTEL routing (see 3.8) |
+| `LOG_WORKER_URL` | Full URL to Log Receiver Worker (must include `/logs` path) |
+| `LOG_WORKER_TOKEN` | Bearer token for Log Receiver Worker authentication |
 | `OPENCLAW_DOCKER_APT_PACKAGES` | Extra apt packages for gateway image build |
 
 **Gotcha:** `.env` values with spaces MUST be quoted (e.g., `VAR="a b c"`). Unquoted values cause bash `source .env` to treat words as separate commands.
 
 ---
 
-## 4. VPS-2 Requirements (Observability Stack)
+## 4. Cloudflare Workers
 
-### 4.1 Service Architecture
+### 4.1 AI Gateway Worker (`workers/ai-gateway/`)
 
-All services use `network_mode: host`. No custom Docker networks.
+Proxies LLM requests through Cloudflare AI Gateway for analytics, rate limiting, and caching. The real API keys live only on the Worker (Cloudflare), not on the VPS.
 
-**Rationale:** Host network provides reliable inter-service communication for metrics, logs, and traces. All services bind to either `127.0.0.1` (local-only) or `10.0.0.2` (WireGuard, accessible from VPS-1).
+**Routes:**
 
-**Bind mounts, not named volumes:** All data persisted under `./data/<service>/` in `/home/openclaw/monitoring/`. This enables easy backup with `rsync` and keeps data visible on the host filesystem.
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `POST` | `/v1/chat/completions` | Bearer token | OpenAI-compatible completions |
+| `POST` | `/v1/messages` | Bearer token | Anthropic messages API |
+| `GET` | `/health` | None | Health check |
 
-### 4.2 Directory Structure
+**Auth:** Bearer token (`AUTH_TOKEN` secret) — clients must include `Authorization: Bearer <token>` header.
 
+**Secrets (set via `wrangler secret put`):**
+
+| Secret | Purpose |
+|--------|---------|
+| `AUTH_TOKEN` | Token clients use to authenticate to this worker |
+| `OPENAI_API_KEY` | Forwarded to OpenAI via AI Gateway |
+| `ANTHROPIC_API_KEY` | Forwarded to Anthropic via AI Gateway |
+| `CF_AI_GATEWAY_TOKEN` | Authenticates requests to Cloudflare AI Gateway |
+| `ACCOUNT_ID` | Cloudflare account ID |
+
+**Vars (in `wrangler.jsonc`):**
+
+| Var | Purpose |
+|-----|---------|
+| `GATEWAY_ID` | Cloudflare AI Gateway ID (e.g., `ai-gateway`) |
+
+### 4.2 Log Receiver Worker (`workers/log-receiver/`)
+
+Receives batched log events from Vector running on VPS-1. Each event is `console.log()`'d so Cloudflare captures it via real-time Logs dashboard and Logpush.
+
+**Routes:**
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `POST` | `/logs` | Bearer token | Receive log events from Vector |
+| `GET` | `/health` | None | Health check |
+
+**Auth:** Bearer token (`AUTH_TOKEN` secret).
+
+**Request format:** Newline-delimited JSON (Vector's HTTP sink with `encoding.codec = "json"`). Each line is one log event:
+
+```json
+{"container_name":"openclaw-gateway","message":"Gateway started","stream":"stdout","timestamp":"2026-02-07T10:30:00Z","host":"openclaw","image":"openclaw:local"}
 ```
-/home/openclaw/monitoring/
-├── docker-compose.yml
-├── prometheus.yml
-├── alerts.yml
-├── alertmanager.yml
-├── loki-config.yml
-├── tempo-config.yml
-├── .env
-├── grafana/
-│   └── provisioning/
-│       ├── datasources/
-│       │   └── datasources.yml
-│       └── dashboards/
-└── data/
-    ├── prometheus/      (owned by 65534:65534)
-    ├── grafana/         (owned by 472:root)
-    ├── loki/            (owned by 10001:10001)
-    ├── tempo/           (owned by 10001:10001)
-    └── alertmanager/    (owned by 65534:65534)
+
+**Handler logic:**
+1. Validate auth (Bearer token)
+2. Read request body as text
+3. Split by newlines, parse each JSON line
+4. For each entry: `console.log(JSON.stringify(entry))` — Cloudflare captures this
+5. Return `{"status":"ok","count":N}`
+
+**Secrets (set via `wrangler secret put`):**
+
+| Secret | Purpose |
+|--------|---------|
+| `AUTH_TOKEN` | Token Vector uses to authenticate to this worker |
+
+### 4.3 Worker Deployment Pattern
+
+Both workers follow the same deployment pattern:
+
+```bash
+cd workers/<worker-name>
+npm install
+wrangler secret put AUTH_TOKEN        # Set the auth token secret
+# Set any additional secrets specific to the worker
+npm run deploy
 ```
 
-### 4.3 Prometheus
-
-**Image:** `prom/prometheus:latest`
-**Container name:** `prometheus`
-**Binding:** `10.0.0.2:9090` (WireGuard IP)
-**Data:** `./data/prometheus:/prometheus` (owned by `65534:65534`)
-**Retention:** `--storage.tsdb.retention.time=30d`
-**OTLP receiver:** Enabled via `--web.enable-otlp-receiver` flag
-
-**Config:** `/home/openclaw/monitoring/prometheus.yml`
-
-| Setting | Value |
-|---------|-------|
-| `scrape_interval` | `15s` |
-| `evaluation_interval` | `15s` |
-
-**Scrape targets:**
-
-| Job | Target | Labels | Purpose |
-|-----|--------|--------|---------|
-| `prometheus` | `10.0.0.2:9090` | — | Self-monitoring |
-| `node-exporter` | `127.0.0.1:9100` | `host=observe` | VPS-2 host metrics |
-| `cadvisor` | `127.0.0.1:8080` | `host=observe` | VPS-2 container metrics |
-| `node-exporter-openclaw` | `10.0.0.1:9100` | `host=openclaw` | VPS-1 host metrics (via WireGuard) |
-
-**Alert rules:** Loaded from `alerts.yml` (see 4.8)
-
-### 4.4 Grafana
-
-**Image:** `grafana/grafana:latest`
-**Container name:** `grafana`
-**Binding:** `127.0.0.1:3000` (localhost only, proxied via Cloudflare Tunnel)
-**Data:** `./data/grafana:/var/lib/grafana` (owned by `472:root`)
-
-**Environment variables:**
-
-| Variable | Value | Purpose |
-|----------|-------|---------|
-| `GF_SECURITY_ADMIN_USER` | `admin` | Admin username |
-| `GF_SECURITY_ADMIN_PASSWORD` | `${GRAFANA_PASSWORD}` | Auto-generated |
-| `GF_USERS_ALLOW_SIGN_UP` | `false` | Disable self-registration |
-| `GF_SERVER_ROOT_URL` | `https://${GRAFANA_DOMAIN}${SUBPATH_GRAFANA}/` | Full external URL |
-| `GF_SERVER_SERVE_FROM_SUB_PATH` | `true` | Enable subpath serving |
-| `GF_SERVER_HTTP_ADDR` | `127.0.0.1` | Localhost only |
-
-### 4.5 Grafana Datasource Provisioning
-
-**File:** `grafana/provisioning/datasources/datasources.yml`
-
-| Datasource | Type | URL | UID | Notes |
-|------------|------|-----|-----|-------|
-| Prometheus | `prometheus` | `http://10.0.0.2:9090` | — | Default datasource |
-| Loki | `loki` | `http://10.0.0.2:3100` | `loki` | UID required for Tempo cross-reference |
-| Tempo | `tempo` | `http://127.0.0.1:3200` | — | Links to Loki via `tracesToLogsV2` |
-
-**Tempo trace-to-logs linking:**
-- `datasourceUid: loki` — References Loki by UID
-- `filterByTraceID: true`, `filterBySpanID: true` — Auto-filter logs by trace/span
-- `spanStartTimeShift: '-1h'`, `spanEndTimeShift: '1h'` — Time window for log lookup
-- Use `tracesToLogsV2` NOT `tracesToLogs` (deprecated)
-
-**Important:** Adding `uid: loki` to existing Loki datasource requires fresh Grafana data volume (wipe `./data/grafana/`) since the existing db has a different auto-generated UID.
-
-### 4.6 Loki
-
-**Image:** `grafana/loki:latest`
-**Container name:** `loki`
-**Bindings:** `10.0.0.2:3100` (HTTP), `10.0.0.2:9096` (gRPC) — both on WireGuard IP
-**Data:** `./data/loki:/loki` (owned by `10001:10001`)
-
-**Config:** `/home/openclaw/monitoring/loki-config.yml`
-
-| Setting | Value | Rationale |
-|---------|-------|-----------|
-| `auth_enabled` | `false` | Single-tenant setup |
-| HTTP + gRPC binding | Both on `10.0.0.2` | **Must match** — different interfaces causes "connection refused" for internal component communication |
-| `instance_addr` | `10.0.0.2` | Must match server bindings |
-| Schema store | `tsdb` | Required by newer Loki versions |
-| Schema version | `v13` | Required by newer Loki versions |
-| Index period | `24h` | Standard |
-| `retention_period` | `720h` (30 days) | Log retention |
-| `kvstore.store` | `inmemory` | Single-node setup |
-| `replication_factor` | `1` | Single-node setup |
-| `allow_structured_metadata` | `true` | **Required for OTLP log ingestion** |
-| Ruler alertmanager URL | `http://127.0.0.1:9093` | Local alertmanager |
-
-### 4.7 Tempo
-
-**Image:** `grafana/tempo:2.10.0` (PINNED — do NOT use `latest`)
-**Container name:** `tempo`
-**Bindings:** `127.0.0.1:3200` (HTTP API), `10.0.0.2:4318` (OTLP receiver on WireGuard)
-**Data:** `./data/tempo:/var/tempo` (owned by `10001:10001`)
-
-**Why pinned to 2.10.0:** `latest` now points to Tempo 3.0 pre-release which replaces `Ingester` with `LiveStore` + `BlockBuilder` + Kafka. Without Kafka, the ingester ring stays empty and all queries fail with "empty ring".
-
-**Config:** `/home/openclaw/monitoring/tempo-config.yml`
-
-| Setting | Value | Rationale |
-|---------|-------|-----------|
-| `stream_over_http_enabled` | `true` | HTTP streaming support |
-| HTTP API | `127.0.0.1:3200` | Local-only API access |
-| OTLP HTTP receiver | `10.0.0.2:4318` | Receives traces from VPS-1 via WireGuard |
-| `max_block_duration` | `5m` | Block rotation interval |
-| `kvstore.store` | `inmemory` | Single-node setup |
-| `replication_factor` | `1` | Single-node setup |
-| Storage backend | `local` | Filesystem storage |
-| `compactor` | NOT a valid key | Tempo 2.10 does not support `compactor` as a top-level config key |
-
-### 4.8 Alert Rules
-
-**File:** `/home/openclaw/monitoring/alerts.yml`
-
-| Alert | Expression | Duration | Severity |
-|-------|-----------|----------|----------|
-| `OpenClawHostDown` | `up{job="node-exporter-openclaw"} == 0` | 2m | critical |
-| `HighMemoryUsage` | Memory > 90% | 5m | warning |
-| `HighDiskUsage` | Disk > 85% | 5m | warning |
-| `HighCPUUsage` | CPU > 80% | 10m | warning |
-
-### 4.9 Alertmanager
-
-**Image:** `prom/alertmanager:latest`
-**Container name:** `alertmanager`
-**Binding:** `127.0.0.1:9093`
-**Data:** `./data/alertmanager:/alertmanager` (owned by `65534:65534`)
-
-**Config:** `/home/openclaw/monitoring/alertmanager.yml`
-
-| Setting | Value |
-|---------|-------|
-| `resolve_timeout` | `5m` |
-| Route group_by | `[alertname, host]` |
-| `group_wait` | `10s` |
-| `group_interval` | `10s` |
-| `repeat_interval` | `1h` |
-| Default receiver | `"default"` |
-
-Webhooks, email, Slack/Discord integrations can be added to receivers.
-
-### 4.10 Node Exporter (VPS-2)
-
-**Image:** `prom/node-exporter:latest`
-**Container name:** `node-exporter`
-**Binding:** `127.0.0.1:9100`
-**Network:** host
-
-Provides VPS-2 host metrics. Scraped by local Prometheus.
-
-### 4.11 cAdvisor
-
-**Image:** `gcr.io/cadvisor/cadvisor:latest`
-**Container name:** `cadvisor`
-**Binding:** `127.0.0.1:8080`
-
-Provides container-level metrics (CPU, memory, network, disk per container). Scraped by local Prometheus.
-
-### 4.12 Data Retention & Storage
-
-| Service | Path | Retention | Ownership |
-|---------|------|-----------|-----------|
-| Prometheus | `./data/prometheus` | 30 days | `65534:65534` |
-| Grafana | `./data/grafana` | N/A (config DB) | `472:root` |
-| Loki | `./data/loki` | 30 days (720h) | `10001:10001` |
-| Tempo | `./data/tempo` | Default | `10001:10001` |
-| Alertmanager | `./data/alertmanager` | N/A (state) | `65534:65534` |
+**Verification:**
+```bash
+curl https://<worker-name>.<account>.workers.dev/health
+# Returns: {"status":"ok"}
+```
 
 ---
 
 ## 5. Key Ports & IPs Reference
 
-### VPS-1 (10.0.0.1)
+### VPS-1
 
 | Port | Binding | Service | Access |
 |------|---------|---------|--------|
 | 222/tcp | 0.0.0.0 | SSH | Public (key-only, adminclaw) |
-| 51820/udp | 0.0.0.0 | WireGuard | Public (encrypted tunnel) |
 | 18789/tcp | 0.0.0.0 | Gateway | Via Cloudflare Tunnel (not directly exposed) |
 | 18790/tcp | 0.0.0.0 | Bridge API | Local |
-| 9100/tcp | 0.0.0.0 | Node Exporter | WireGuard only (UFW rule) |
-| 9080/tcp | host | Promtail | Local debugging |
-
-### VPS-2 (10.0.0.2)
-
-| Port | Binding | Service | Access |
-|------|---------|---------|--------|
-| 222/tcp | 0.0.0.0 | SSH | Public (key-only, adminclaw) |
-| 51820/udp | 0.0.0.0 | WireGuard | Public (encrypted tunnel) |
-| 9090/tcp | 10.0.0.2 | Prometheus | WireGuard only |
-| 3000/tcp | 127.0.0.1 | Grafana | Via Cloudflare Tunnel |
-| 3100/tcp | 10.0.0.2 | Loki HTTP | WireGuard only |
-| 9096/tcp | 10.0.0.2 | Loki gRPC | WireGuard only |
-| 3200/tcp | 127.0.0.1 | Tempo HTTP API | Local |
-| 4318/tcp | 10.0.0.2 | Tempo OTLP | WireGuard only |
-| 9093/tcp | 127.0.0.1 | Alertmanager | Local |
-| 9100/tcp | 127.0.0.1 | Node Exporter | Local |
-| 8080/tcp | 127.0.0.1 | cAdvisor | Local |
 
 ### Docker Networks (VPS-1)
 
@@ -879,23 +741,12 @@ Provides container-level metrics (CPU, memory, network, disk per container). Scr
 - **Container name is `openclaw-gateway`** (explicit `container_name`), not `openclaw-openclaw-gateway-1`
 - **No `openclaw` binary on PATH** — Use `node dist/index.js` instead. Full: `sudo docker exec openclaw-gateway node dist/index.js <subcommand>`
 
-### ESM/CJS Module Boundary
-- Gateway runs as ESM (`"type": "module"` in package.json)
-- `--require` files must use `.cjs` extension
-- CJS `require()` and ESM `import` load different module instances — patch objects, not prototypes
-- `@opentelemetry/api` uses `globalThis[Symbol.for()]` singleton — shared across CJS/ESM
-
 ### Build & Patching
 - **Patches must go before `USER node`** in Dockerfile — npm/apt can't write to system dirs after user change
-- **Failed builds leave patches in place** — `git checkout` cleanup only runs on success. Manually restore before retry.
+- **Failed builds leave patches in place** — `git checkout` cleanup only runs on success. Manually restore before retry: `git checkout -- Dockerfile`
 - **`.env` values with spaces must be quoted** — `VAR=a b c` breaks `source .env`
 - **`sed /i` with backslash continuations breaks Dockerfiles** — Use single-line RUN commands
-
-### OTEL
-- **No `endpoint` in openclaw.json** — Forces all signals to one destination, overriding per-signal env vars
-- **Per-signal env vars are full URLs** — SDK does not append path for per-signal vars
-- **No trace/metrics exporter log messages** — Plugin only logs for logs exporter. All three are initialized.
-- **Dual-bundle fix required** — `diagnostic-events.ts` listeners Set must use `globalThis` to be shared across bundles
+- **Only 2 patches remain** — Claude Code CLI (#1) and Docker+gosu (#2). OTEL patches no longer needed.
 
 ### UID & Ownership
 - Host `ubuntu` is uid 1000, host `openclaw` is uid 1002. Container `node` is uid 1000.
@@ -903,21 +754,13 @@ Provides container-level metrics (CPU, memory, network, disk per container). Scr
 - Sysbox remaps host uid 1000 to uid 1002 inside container — entrypoint `chown` fixes sandbox credentials
 - Backups must run as root (uid 1000 files not readable by openclaw uid 1002)
 
-### Tempo
-- **Pin to `grafana/tempo:2.10.0`** — v3.0 pre-release requires Kafka
-- **`compactor` is not a valid top-level key** in Tempo 2.10
-- Must include `kvstore.store: inmemory` and `replication_factor: 1` for single-node
-
-### Loki
-- **HTTP and gRPC must bind to the same interface** — Different interfaces causes internal "connection refused"
-- **`allow_structured_metadata: true` required** for OTLP log ingestion
-- Schema v13 with tsdb store required by newer versions
-
-### Grafana
-- **Changing Loki datasource UID** requires wiping `./data/grafana/` — existing DB has auto-generated UID
-- Use `tracesToLogsV2` not `tracesToLogs` (deprecated)
-
 ### Sandbox
 - **Do NOT use `docker build -f - /dev/null`** in Sysbox — rejects `/dev/null` as build context
 - **Do NOT use `docker run`/`docker commit`** — creates dirty layers. Use `docker build` with FROM.
 - **Entrypoint heredocs via SSH** mangle shebangs — use `scp` instead
+
+### Vector (Log Shipping)
+- **`LOG_WORKER_URL` must include the `/logs` path** — Vector sends to this URL directly, it does not append any path. Example: `https://log-receiver.<account>.workers.dev/logs`
+- **Checkpoint recovery** — If `./data/vector/` is deleted, Vector will re-ship all available Docker logs from the beginning. This is safe (Worker is idempotent) but may cause a burst of log traffic.
+- **Docker socket required** — Vector needs `/var/run/docker.sock` mounted read-only to discover and tail container logs.
+- **Batch timeout is 60 seconds** — Logs may take up to 60 seconds to appear in the Worker after being written. This is the normal batching delay, not a bug.

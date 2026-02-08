@@ -1,192 +1,112 @@
 # 07 - Verification & Testing
 
-Comprehensive verification procedures after deployment for playbooks 01 through 06.
+Comprehensive verification procedures after deployment.
 
 ## Overview
 
 This playbook verifies:
 
-- WireGuard tunnel connectivity
 - OpenClaw gateway functionality
-- Monitoring stack health
+- Vector log shipping
+- Cloudflare Workers health
 - End-to-end connectivity
 
 ## Prerequisites
 
 - All previous playbooks completed
 - Networking playbook (cloudflare-tunnel or caddy) completed
-- Both VPSs rebooted after configuration
+- Workers deployed (08-workers.md)
+- VPS-1 rebooted after configuration
 
-## Pre-Verification: Reboot Both VPSs
+## Pre-Verification: Reboot VPS-1
 
-Before running verification tests, reboot both VPSs to ensure all configuration changes take effect cleanly (especially kernel parameters, SSH config, and systemd services).
-
-**On VPS-1:**
-
-```bash
-sudo reboot
-```
-
-**On VPS-2:**
+Before running verification tests, reboot VPS-1 to ensure all configuration changes take effect cleanly (especially kernel parameters, SSH config, and systemd services).
 
 ```bash
 sudo reboot
 ```
 
-Wait 1-2 minutes for both VPSs to come back online, then verify SSH access:
+Wait 1-2 minutes for VPS-1 to come back online, then verify SSH access:
 
 ```bash
-# Test SSH to both VPSs on port 222 (using adminclaw)
 ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS1-IP> "echo 'VPS-1 online'"
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS2-IP> "echo 'VPS-2 online'"
 ```
 
 ---
 
-## 7.1 Verify WireGuard Tunnel
-
-### On VPS-1
-
-```bash
-# Check interface is up
-sudo wg show
-
-# Ping VPS-2
-ping -c 3 10.0.0.2
-```
-
-### On VPS-2
-
-```bash
-# Check interface is up
-sudo wg show
-
-# Ping VPS-1
-ping -c 3 10.0.0.1
-```
-
-**Expected:** Both pings succeed, `wg show` shows "latest handshake" within the last minute.
-
----
-
-## 7.2 Verify OpenClaw (VPS-1)
+## 7.1 Verify OpenClaw (VPS-1)
 
 ```bash
 # Check containers are running
 cd /home/openclaw/openclaw
 sudo -u openclaw docker compose ps
 
-# Check logs for errors
-sudo docker logs --tail 50 openclaw-openclaw-gateway-1
+# Check gateway logs for errors
+sudo docker logs --tail 50 openclaw-gateway
 
 # Test internal endpoint
 curl -s http://localhost:18789/ | head -5
 
 # Test health endpoint
 curl -s http://localhost:18789/health
-
-# Check Node Exporter
-curl -s http://localhost:9100/metrics | head -5
-
-# Check Promtail
-sudo docker logs --tail 10 promtail
 ```
 
 **Expected:** All containers running, health endpoint returns OK.
 
 ---
 
-## 7.3 Verify Monitoring (VPS-2)
+## 7.2 Verify Vector (Log Shipping)
 
 ```bash
-# Check containers are running
-cd /home/openclaw/monitoring
-sudo -u openclaw docker compose ps
+# Check Vector is running
+sudo -u openclaw docker compose ps vector
 
-# Test Prometheus targets (should show all targets as "up")
-# Note: Prometheus bound to WireGuard IP (10.0.0.2)
-curl -s http://10.0.0.2:9090/api/v1/targets | jq -r '.data.activeTargets[] | .scrapePool + ": " + .health'
+# Check Vector logs for errors
+sudo docker logs --tail 20 vector
 
-# Test Loki readiness
-curl -s http://10.0.0.2:3100/ready
-
-# Test Grafana health
-curl -s http://localhost:3000/api/health
-
-# Test Alertmanager
-curl -s http://localhost:9093/-/healthy
+# Check checkpoint data exists
+ls -la /home/openclaw/openclaw/data/vector/
 ```
 
-**Expected:** All containers running, all Prometheus targets "up", Loki and Grafana healthy.
+**Expected:** Vector running, no errors in logs, checkpoint files present.
 
 ---
 
-## 7.4 Verify Cross-VPS Metrics
+## 7.3 Verify Cloudflare Workers
 
-From VPS-2, verify it can scrape VPS-1 metrics:
+### Log Receiver Worker
 
 ```bash
-# Test Node Exporter on VPS-1
-curl -s http://10.0.0.1:9100/metrics | head -5
+# Health check (no auth required)
+curl -s https://<LOG_WORKER_URL>/health
 
-# Check Prometheus is scraping successfully
-curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.scrapePool | contains("openclaw")) | {job: .scrapePool, health: .health}'
+# Test log ingestion (replace with your actual URL and token)
+curl -X POST https://<LOG_WORKER_URL>/logs \
+  -H "Authorization: Bearer <LOG_WORKER_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"container_name":"test","message":"verification test","stream":"stdout","timestamp":"2026-01-01T00:00:00Z"}'
 ```
 
-**Expected:** Metrics returned from VPS-1, Prometheus shows "up" for OpenClaw targets.
+**Expected:** Health returns `{"status":"ok"}`, log ingestion returns `{"status":"ok","count":1}`.
+
+### AI Gateway Worker
+
+```bash
+# Health check
+curl -s https://<AI_GATEWAY_WORKER_URL>/health
+```
+
+**Expected:** Returns `{"status":"ok"}`.
+
+### Verify Logs in Cloudflare Dashboard
+
+1. Go to **Cloudflare Dashboard** -> **Workers & Pages** -> **log-receiver** -> **Logs**
+2. Check for the test log entry sent above
+3. Check for container logs flowing from Vector
 
 ---
 
-## 7.4a Verify OTEL Signals (VPS-2)
-
-All three OTEL signals route from VPS-1 to their respective backends on VPS-2:
-- **Traces** → Tempo (10.0.0.2:4318)
-- **Metrics** → Prometheus OTLP receiver (10.0.0.2:9090)
-- **Logs** → Loki OTLP endpoint (10.0.0.2:3100)
-
-```bash
-# Check Tempo (traces)
-curl -s http://localhost:3200/ready
-ss -tlnp | grep 4318
-
-# Check Prometheus OTLP receiver (metrics)
-# Prometheus now on WireGuard IP with OTLP enabled
-curl -s http://10.0.0.2:9090/api/v1/status/config | grep -o 'enable_otlp_receiver'
-
-# From VPS-1: Test all OTLP endpoints are reachable
-curl -s http://10.0.0.2:4318/v1/traces -X POST -H "Content-Type: application/json" -d '{}'
-curl -s http://10.0.0.2:9090/api/v1/otlp/v1/metrics -X POST -H "Content-Type: application/json" -d '{}'
-curl -s http://10.0.0.2:3100/otlp/v1/logs -X POST -H "Content-Type: application/json" -d '{}'
-# Returns 400/415 (not connection refused) = endpoints reachable
-```
-
-**Expected:** All three OTLP endpoints reachable. Tempo ready, Prometheus OTLP enabled, Loki accepting OTLP logs.
-
----
-
-## 7.5 Verify Log Shipping
-
-From VPS-2, verify Loki is receiving logs from VPS-1:
-
-```bash
-# Query recent logs
-curl -s "http://10.0.0.2:3100/loki/api/v1/query" \
-  --data-urlencode 'query={host="openclaw"}' | jq '.data.result | length'
-
-# Should return > 0 if logs are flowing
-```
-
-From VPS-1, check Promtail:
-
-```bash
-sudo docker logs --tail 20 promtail
-```
-
-**Expected:** Promtail shows successful pushes to Loki, Loki has logs from "openclaw" host.
-
----
-
-## 7.6 Verify External Access
+## 7.4 Verify External Access
 
 The specific tests depend on which networking option you chose.
 
@@ -218,89 +138,75 @@ curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expec
 
 ---
 
-## 7.7 Security Checklist
+## 7.5 Verify Host Alerter
 
-### Both VPSs
+```bash
+# Test the alerter script manually (should not send alerts if everything is healthy)
+sudo /home/openclaw/scripts/host-alert.sh
+echo $?  # Should be 0
+
+# Check cron job is installed
+cat /etc/cron.d/openclaw-alerts
+```
+
+**Expected:** Script exits 0 with no errors, cron entry exists.
+
+---
+
+## 7.6 Security Checklist
+
+### VPS-1
 
 - [ ] SSH on port 222 only (port 22 removed from UFW)
 - [ ] SSH key-only authentication (password disabled)
 - [ ] Only `adminclaw` user can SSH (AllowUsers directive)
-- [ ] UFW enabled with minimal rules
+- [ ] UFW enabled with minimal rules (SSH only)
 - [ ] Fail2ban running
-- [ ] WireGuard tunnel active
+- [ ] No WireGuard interface present
 
 ```bash
-# Verify on each VPS
+# Verify on VPS-1
 sudo ufw status
 sudo systemctl status fail2ban
-sudo wg show
 ss -tlnp | grep 222
+ip link show wg0 2>&1 | grep -q "does not exist" && echo "No WireGuard (correct)"
 ```
 
-### VPS-1 (OpenClaw)
+### VPS-1 Services
 
 - [ ] OpenClaw gateway running
 - [ ] Sysbox runtime available
-- [ ] Node Exporter accessible via WireGuard
-- [ ] Promtail shipping logs
+- [ ] Vector shipping logs
 - [ ] Backup cron job configured
+- [ ] Host alerter cron job configured
 
 ```bash
 sudo systemctl status sysbox
 sudo -u openclaw docker compose ps
-curl http://localhost:9100/metrics | head -1
+sudo docker logs --tail 5 vector
 cat /etc/cron.d/openclaw-backup
+cat /etc/cron.d/openclaw-alerts
 ```
 
-### VPS-2 (Observability)
+### Cloudflare Workers
 
-- [ ] All monitoring containers running
-- [ ] Prometheus scraping all targets
-- [ ] Loki receiving logs
-- [ ] Tempo running and ready
-- [ ] OTLP receiver on WireGuard only (10.0.0.2:4318)
-- [ ] Grafana accessible
-
-```bash
-sudo -u openclaw docker compose ps
-curl -s http://10.0.0.2:9090/api/v1/targets | jq '.data.activeTargets[].health' | sort | uniq -c
-curl -s http://10.0.0.2:3100/ready
-curl -s http://localhost:3200/ready
-ss -tlnp | grep 4318
-```
+- [ ] AI Gateway Worker responding
+- [ ] Log Receiver Worker responding
+- [ ] Logs appearing in Cloudflare Workers dashboard
 
 ---
 
-## 7.8 End-to-End Test
+## 7.7 End-to-End Test
 
 1. **Access OpenClaw** via configured domain
-2. **Login to Grafana** at `https://<grafana-domain><SUBPATH_GRAFANA>/`
-3. **Verify Prometheus targets** in Grafana → Explore → Prometheus
-4. **Check logs flowing** in Grafana → Explore → Loki → `{host="openclaw"}`
-5. **Check traces** in Grafana → Explore → Tempo → `{ resource.service.name = "openclaw-gateway" }`
-6. **Trigger a test alert** (optional):
-
-   ```bash
-   # Stop Node Exporter on VPS-1 temporarily
-   sudo docker stop node-exporter
-   # Wait 1-2 minutes, check Alertmanager
-   curl http://localhost:9093/api/v2/alerts
-   # Restart
-   sudo docker start node-exporter
-   ```
+2. **Send a test message** via webchat
+3. **Verify LLM response** comes back (confirms AI Gateway Worker routing)
+4. **Check Cloudflare AI Gateway dashboard** for the request (Workers & Pages -> AI Gateway)
+5. **Check Cloudflare Workers logs** for container log entries (Workers & Pages -> log-receiver -> Logs)
 
 ---
 
 ## Troubleshooting Quick Reference
-
-### WireGuard Issues
-
-```bash
-sudo wg show
-sudo systemctl status wg-quick@wg0
-sudo journalctl -u wg-quick@wg0
-sudo ufw status | grep 51820
-```
 
 ### Container Issues
 
@@ -309,6 +215,19 @@ sudo -u openclaw docker compose ps
 sudo -u openclaw docker compose logs -f <service>
 docker system df
 free -h
+```
+
+### Vector Issues
+
+```bash
+# Check Vector logs
+sudo docker logs --tail 50 vector
+
+# Restart Vector
+sudo -u openclaw docker compose restart vector
+
+# Check if Worker endpoint is reachable
+curl -s https://<LOG_WORKER_URL>/health
 ```
 
 ### Networking Issues
@@ -333,14 +252,12 @@ sudo journalctl -u <service> -f
 
 Deployment is complete when:
 
-1. ✅ Both VPSs accessible via SSH on port 222
-2. ✅ WireGuard tunnel active with recent handshakes
-3. ✅ OpenClaw gateway responding on VPS-1
-4. ✅ All Prometheus targets showing "up"
-5. ✅ Logs appearing in Loki from VPS-1
-6. ✅ Grafana accessible with working datasources
-7. ✅ External access working via configured networking option
-8. ✅ Backup cron job configured on VPS-1
-9. ✅ OTEL traces appearing in Tempo from VPS-1
-10. ✅ OTEL metrics appearing in Prometheus from VPS-1
-11. ✅ OTEL logs appearing in Loki from VPS-1
+1. VPS-1 accessible via SSH on port 222
+2. OpenClaw gateway responding on VPS-1
+3. Vector running and shipping logs
+4. Cloudflare Workers responding to health checks
+5. Container logs appearing in Cloudflare Workers dashboard
+6. External access working via configured networking option
+7. Backup cron job configured on VPS-1
+8. Host alerter cron job configured on VPS-1
+9. LLM requests visible in Cloudflare AI Gateway analytics

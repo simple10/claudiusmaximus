@@ -1,16 +1,31 @@
 # TODO
 
-- [ ] Harden openclaw gateway container with --read-only or --cap-drop=ALL, after:
-  - Current state has been fully tested and is functional
-  - Self-modification loop has been fully tested
-  - Then try hardening and see if openclaw can still do all the normal tasks
+## Completed (this branch)
 
-- [ ] Re-run from scratch once OTEL is working
-- [ ] Start using OpenClaw
-  - [ ] Verify it can make modifications
+- [x] Create branch otel-v1 and push to github — saves a snapshot of the OTEL work
+- [x] Create Log Receiver Worker (workers/log-receiver/)
+- [x] Create Vector config (vector.toml)
+- [x] Create host alerter script (scripts/host-alert.sh)
+- [x] Simplify build script — remove OTEL patches 1-3
+- [x] Update openclaw-config.env — remove VPS-2, OTEL vars
+- [x] Update all playbooks for single-VPS architecture
+- [x] Update CLAUDE.md, REQUIREMENTS.md, README.md
+- [x] Create Workers deployment playbook (08-workers.md)
+- [x] Create VPS-2 decommission playbook (09-decommission-vps2.md)
 
-- [ ] Flesh out where OpenClaw data lives - add R2 backend?
+## Next Steps
 
-- [ ] Scrub git for openclaw-config.env
-- [ ] Squash commit to clean up history with new messages
-- [ ] Push to github
+- [ ] Deploy the AI Gateway worker & test end-to-end
+- [ ] Deploy the Log Receiver worker & test with Vector
+- [ ] Deploy single-VPS architecture on VPS-1
+- [ ] Run decommission playbook on VPS-2
+- [ ] Test ANTHROPIC_BASE_URL env var with OpenClaw/Anthropic SDK
+- [ ] Configure Cloudflare Health Check in dashboard
+
+## Future
+
+- [ ] Add R2 sync of config & workspace for backups
+- [ ] Add optional sidecar proxy to capture and inspect sandbox traffic
+- [ ] Test if OpenClaw can use claude code effectively in sandboxes
+- [ ] Harden openclaw gateway container further (after testing sandbox stability)
+- [ ] Add Logpush to R2 for long-term log storage

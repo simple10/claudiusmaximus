@@ -19,7 +19,9 @@
       "Bash(npx tsc:*)",
       "Bash(npx tsx:*)",
       "Bash(echo:*)",
-      "WebFetch(domain:docs.openclaw.ai)"
+      "WebFetch(domain:docs.openclaw.ai)",
+      "Bash(npm install:*)",
+      "Bash(npm run typecheck:*)"
     ]
   }
 }

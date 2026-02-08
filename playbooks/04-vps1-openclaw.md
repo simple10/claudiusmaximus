@@ -10,12 +10,12 @@ This playbook configures:
 - Directory structure and permissions
 - OpenClaw repository and configuration
 - Docker Compose with security hardening
-- Promtail for log shipping
+- Vector for log shipping to Cloudflare
+- Host alerter for Telegram notifications
 
 ## Prerequisites
 
 - [01-base-setup.md](01-base-setup.md) completed on VPS-1
-- [02-wireguard.md](02-wireguard.md) completed (tunnel active)
 - [03-docker.md](03-docker.md) completed on VPS-1
 - SSH access as `adminclaw` on port 222
 
@@ -122,12 +122,13 @@ EOF
 #!/bin/bash
 # Generate gateway token
 GATEWAY_TOKEN=$(openssl rand -hex 32)
-GRAFANA_PASSWORD=$(openssl rand -base64 16)
 
 # Get API keys from config (set these variables before running)
 # ANTHROPIC_API_KEY=sk-ant-...
 # TELEGRAM_BOT_TOKEN=...
 # DISCORD_BOT_TOKEN=...
+# LOG_WORKER_URL=...
+# LOG_WORKER_TOKEN=...
 
 sudo -u openclaw tee /home/openclaw/openclaw/.env << EOF
 # Gateway authentication
@@ -140,22 +141,17 @@ ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
 DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
 
-# Grafana password for monitoring
-GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
+# Log shipping to Cloudflare Worker
+LOG_WORKER_URL=${LOG_WORKER_URL}
+LOG_WORKER_TOKEN=${LOG_WORKER_TOKEN}
 
 # Docker compose variables (required by repo's docker-compose.yml)
 OPENCLAW_CONFIG_DIR=/home/openclaw/.openclaw
 OPENCLAW_WORKSPACE_DIR=/home/openclaw/.openclaw/workspace
 # Bind to 0.0.0.0 so cloudflared can reach the gateway on localhost
-# Also allows direct access via WireGuard for debugging
 OPENCLAW_GATEWAY_PORT=0.0.0.0:18789
 OPENCLAW_BRIDGE_PORT=0.0.0.0:18790
 OPENCLAW_GATEWAY_BIND=lan
-
-# OTEL per-signal routing (each signal goes to its backend on VPS-2)
-OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.0.0.2:4318/v1/traces
-OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.0.0.2:9090/api/v1/otlp/v1/metrics
-OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.0.0.2:3100/otlp/v1/logs
 
 # Extra apt packages baked into gateway image at build time (space-separated)
 OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg build-essential imagemagick"
@@ -168,7 +164,6 @@ echo ""
 echo "========================================="
 echo "Generated Credentials (save these):"
 echo "  Gateway Token: ${GATEWAY_TOKEN}"
-echo "  Grafana Password: ${GRAFANA_PASSWORD}"
 echo "========================================="
 ```
 
@@ -237,11 +232,6 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TZ=UTC
-      # OTEL per-signal routing: each signal goes to its own backend
-      # Do NOT set endpoint in openclaw.json — these env vars are only picked up when no explicit url is passed
-      - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://10.0.0.2:4318/v1/traces
-      - OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://10.0.0.2:9090/api/v1/otlp/v1/metrics
-      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://10.0.0.2:3100/otlp/v1/logs
     networks:
       - openclaw-gateway-net
     healthcheck:
@@ -263,33 +253,24 @@ services:
     networks:
       - openclaw-gateway-net
 
-  # Node Exporter - ships metrics to VPS-2 Prometheus
-  node-exporter:
-    image: prom/node-exporter:latest
-    container_name: node-exporter
-    restart: unless-stopped
-    command:
-      - "--path.procfs=/host/proc"
-      - "--path.sysfs=/host/sys"
-      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+  vector:
+    image: timberio/vector:0.43.1-alpine
+    container_name: vector
+    restart: always
     volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    network_mode: host
-
-  promtail:
-    image: grafana/promtail:latest
-    container_name: promtail
-    restart: unless-stopped
-    volumes:
-      - ./promtail-config.yml:/etc/promtail/config.yml:ro
-      - /var/log:/var/log:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      # Persist positions.yaml so Promtail doesn't re-ship logs after restart
-      - ./promtail-positions:/tmp
-    command: -config.file=/etc/promtail/config.yml
-    network_mode: host
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./vector.toml:/etc/vector/vector.toml:ro
+      - ./data/vector:/var/lib/vector
+    environment:
+      - LOG_WORKER_URL=${LOG_WORKER_URL}
+      - LOG_WORKER_TOKEN=${LOG_WORKER_TOKEN}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    networks:
+      - openclaw-gateway-net
 
 networks:
   openclaw-gateway-net:
@@ -299,42 +280,36 @@ EOF
 
 ---
 
-## 4.7 Create Promtail Config
+## 4.7 Create Vector Config
 
-Ships logs to VPS-2 Loki via WireGuard.
+Ships Docker container logs to the Cloudflare Log Receiver Worker.
 
 ```bash
 #!/bin/bash
-sudo -u openclaw tee /home/openclaw/openclaw/promtail-config.yml << 'EOF'
-server:
-  http_listen_port: 9080
-  grpc_listen_port: 0
+sudo -u openclaw tee /home/openclaw/openclaw/vector.toml << 'EOF'
+# Vector configuration — ships Docker container logs to Cloudflare Log Receiver Worker
 
-positions:
-  filename: /tmp/positions.yaml
+[sources.docker_logs]
+type = "docker_logs"
 
-clients:
-  - url: http://10.0.0.2:3100/loki/api/v1/push
+[sinks.cloudflare_worker]
+type = "http"
+inputs = ["docker_logs"]
+uri = "${LOG_WORKER_URL}"
+encoding.codec = "json"
+auth.strategy = "bearer"
+auth.token = "${LOG_WORKER_TOKEN}"
 
-scrape_configs:
-  - job_name: system
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: varlogs
-          host: openclaw
-          __path__: /var/log/*log
+[sinks.cloudflare_worker.batch]
+max_bytes = 262144
+timeout_secs = 60
 
-  - job_name: docker
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: docker
-          host: openclaw
-          __path__: /var/lib/docker/containers/*/*-json.log
+[sinks.cloudflare_worker.request]
+retry_max_duration_secs = 300
 EOF
+
+# Create data directory for Vector state
+sudo -u openclaw mkdir -p /home/openclaw/openclaw/data/vector
 ```
 
 ---
@@ -344,9 +319,6 @@ EOF
 ```bash
 #!/bin/bash
 # IMPORTANT: OpenClaw rejects unknown config keys - only use documented keys
-# diagnostics-otel plugin exports all three signals to VPS-2 via WireGuard:
-#   traces → Tempo (4318), metrics → Prometheus (9090), logs → Loki (3100)
-# No endpoint field: per-signal routing via OTEL SDK env vars in docker-compose.override.yml
 
 # Validate commands.restart is accepted before applying:
 # sudo docker exec openclaw-gateway node dist/index.js gateway --help 2>&1 | grep -i restart
@@ -387,25 +359,6 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
     "trustedProxies": ["172.30.0.1"],
     "controlUi": {
       "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}"
-    }
-  },
-  "plugins": {
-    "allow": ["diagnostics-otel"],
-    "entries": {
-      "diagnostics-otel": { "enabled": true }
-    }
-  },
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "protocol": "http/protobuf",
-      "serviceName": "openclaw-gateway",
-      "traces": ${OPENCLAW_OTEL_TRACES:-true},
-      "metrics": ${OPENCLAW_OTEL_METRICS:-true},
-      "logs": ${OPENCLAW_OTEL_LOGS:-true},
-      "sampleRate": ${OPENCLAW_OTEL_SAMPLERATE:-0.2},
-      "flushIntervalMs": ${OPENCLAW_OTEL_FLUSHINTERVAL:-20000}
     }
   },
   "agents": {
@@ -475,25 +428,6 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
       "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}"
     }
   },
-  "plugins": {
-    "allow": ["diagnostics-otel"],
-    "entries": {
-      "diagnostics-otel": { "enabled": true }
-    }
-  },
-  "diagnostics": {
-    "enabled": true,
-    "otel": {
-      "enabled": true,
-      "protocol": "http/protobuf",
-      "serviceName": "openclaw-gateway",
-      "traces": ${OPENCLAW_OTEL_TRACES:-true},
-      "metrics": ${OPENCLAW_OTEL_METRICS:-true},
-      "logs": ${OPENCLAW_OTEL_LOGS:-true},
-      "sampleRate": ${OPENCLAW_OTEL_SAMPLERATE:-0.2},
-      "flushIntervalMs": ${OPENCLAW_OTEL_FLUSHINTERVAL:-20000}
-    }
-  },
   "agents": {
     "defaults": {
       "sandbox": {
@@ -557,12 +491,9 @@ sudo chmod 600 /home/openclaw/.openclaw/openclaw.json
 
 ## 4.8a Install Build Script and Patches
 
-Instead of maintaining a forked Dockerfile, we patch the upstream Dockerfile and source in-place before building. Each patch auto-skips when the corresponding upstream issue is fixed.
+Instead of maintaining a forked Dockerfile, we patch the upstream Dockerfile in-place before building. Each patch auto-skips when already applied.
 
-Three upstream issues require patching, plus two additions:
-- [#7201](https://github.com/openclaw/openclaw/issues/7201): Dockerfile doesn't copy extension `package.json` before `pnpm install`
-- [#3201](https://github.com/openclaw/openclaw/issues/3201): `diagnostics-otel` uses deprecated `@opentelemetry` v2.x APIs
-- Dual-bundle diagnostic events: `diagnostic-events.ts` is bundled into both the loader chunk and plugin-sdk, creating two separate listener Sets — events emitted by the gateway never reach plugin listeners
+Two additions are patched:
 - Claude Code CLI: installs `@anthropic-ai/claude-code` globally so agents can use it as a coding tool
 - Docker + gosu: installs `docker.io` and `gosu` for nested Docker (sandbox isolation via Sysbox)
 
@@ -574,95 +505,18 @@ sudo -u openclaw mkdir -p /home/openclaw/scripts
 # Install build script
 sudo -u openclaw tee /home/openclaw/scripts/build-openclaw.sh << 'SCRIPTEOF'
 #!/bin/bash
-# Build OpenClaw with auto-patching for upstream issues.
+# Build OpenClaw with auto-patching.
 #
-# Patches applied (each auto-skips when upstream fixes the issue):
-#   1. Dockerfile: copy extension package.json before pnpm install (upstream #7201)
-#   2. OTEL extension: fix @opentelemetry v2.x API changes (upstream #3201)
-#      a. Resource -> resourceFromAttributes (@opentelemetry/resources v2.x)
-#      b. LoggerProvider constructor-based processors (@opentelemetry/sdk-logs v0.211+)
-#   3. Diagnostic events: use globalThis for shared listener set (dual-bundle fix)
-#      The diagnostic-events.ts module is bundled into both loader chunk and plugin-sdk,
-#      creating two separate listener Sets. Using globalThis ensures they share one Set.
-#   4. Dockerfile: install Claude Code CLI globally (@anthropic-ai/claude-code)
-#   5. Dockerfile: install Docker + gosu for nested Docker (sandbox isolation via Sysbox)
+# Patches applied (each auto-skips when already present):
+#   1. Dockerfile: install Claude Code CLI globally (@anthropic-ai/claude-code)
+#   2. Dockerfile: install Docker + gosu (nested Docker for sandboxes via Sysbox)
 #
 # Usage: sudo -u openclaw /home/openclaw/scripts/build-openclaw.sh
 set -euo pipefail
 
 cd /home/openclaw/openclaw
 
-OTEL_SERVICE="extensions/diagnostics-otel/src/service.ts"
-
-# ── 1. Patch Dockerfile for extension deps (upstream #7201) ──────────
-if ! grep -q "extensions/diagnostics-otel/package.json" Dockerfile; then
-  echo "[build] Patching Dockerfile for extension deps (upstream #7201)..."
-  sed -i '/COPY scripts \.\/scripts/a COPY extensions/diagnostics-otel/package.json ./extensions/diagnostics-otel/package.json' Dockerfile
-else
-  echo "[build] Dockerfile already includes extension deps (upstream #7201 fixed or already patched)"
-fi
-
-# ── 2. Patch OTEL v2.x API compat (upstream #3201) ──────────────────
-if grep -q "new Resource(" "$OTEL_SERVICE" 2>/dev/null; then
-  echo "[build] Patching OTEL v2.x API: Resource -> resourceFromAttributes..."
-  # 2a. Import: Resource -> resourceFromAttributes
-  sed -i 's/import { Resource } from "@opentelemetry\/resources";/import { resourceFromAttributes } from "@opentelemetry\/resources";/' "$OTEL_SERVICE"
-  # 2b. Usage: new Resource( -> resourceFromAttributes(
-  sed -i 's/const resource = new Resource(/const resource = resourceFromAttributes(/' "$OTEL_SERVICE"
-else
-  echo "[build] OTEL Resource patch not needed (upstream fixed or already patched)"
-fi
-
-if grep -q "addLogRecordProcessor" "$OTEL_SERVICE" 2>/dev/null; then
-  echo "[build] Patching OTEL v2.x API: LoggerProvider constructor-based processors..."
-  # 2c. LoggerProvider: move processor from addLogRecordProcessor() to constructor
-  python3 -c "
-import sys
-with open('$OTEL_SERVICE', 'r') as f:
-    content = f.read()
-old = '''        logProvider = new LoggerProvider({ resource });
-        logProvider.addLogRecordProcessor(
-          new BatchLogRecordProcessor(
-            logExporter,
-            typeof otel.flushIntervalMs === \"number\"
-              ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
-              : {},
-          ),
-        );'''
-new = '''        logProvider = new LoggerProvider({
-          resource,
-          logRecordProcessors: [
-            new BatchLogRecordProcessor(
-              logExporter,
-              typeof otel.flushIntervalMs === \"number\"
-                ? { scheduledDelayMillis: Math.max(1000, otel.flushIntervalMs) }
-                : {},
-            ),
-          ],
-        });'''
-if old in content:
-    content = content.replace(old, new)
-    with open('$OTEL_SERVICE', 'w') as f:
-        f.write(content)
-    print('[build] LoggerProvider patch applied')
-else:
-    print('[build] WARNING: LoggerProvider pattern not found (upstream may have changed)')
-    sys.exit(1)
-"
-else
-  echo "[build] OTEL LoggerProvider patch not needed (upstream fixed or already patched)"
-fi
-
-# ── 3. Patch diagnostic events for shared listener Set (dual-bundle fix) ──
-DIAG_EVENTS="src/infra/diagnostic-events.ts"
-if grep -q "^const listeners = new Set" "$DIAG_EVENTS" 2>/dev/null; then
-  echo "[build] Patching diagnostic-events.ts for shared globalThis listener Set..."
-  sed -i 's/^const listeners = new Set<(evt: DiagnosticEventPayload) => void>();/const listeners = ((globalThis as any).__OPENCLAW_DIAG_LISTENERS__ ??= new Set<(evt: DiagnosticEventPayload) => void>()) as Set<(evt: DiagnosticEventPayload) => void>;/' "$DIAG_EVENTS"
-else
-  echo "[build] Diagnostic events patch not needed (upstream fixed or already patched)"
-fi
-
-# ── 4. Patch Dockerfile to install Claude Code CLI ────────────────────
+# ── 1. Patch Dockerfile to install Claude Code CLI ────────────────────
 if ! grep -q "@anthropic-ai/claude-code" Dockerfile; then
   echo "[build] Patching Dockerfile to install Claude Code CLI..."
   # Insert before USER (not CMD) so npm install runs as root
@@ -671,7 +525,7 @@ else
   echo "[build] Claude Code CLI already in Dockerfile (already patched)"
 fi
 
-# ── 5. Patch Dockerfile to install Docker + gosu (nested Docker for sandboxes) ──
+# ── 2. Patch Dockerfile to install Docker + gosu (nested Docker for sandboxes) ──
 # docker.io includes: docker CLI, dockerd, containerd, runc
 # gosu: drop-in replacement for su/sudo that doesn't spawn subshell (proper PID 1 signal handling)
 # usermod: add node user to docker group for socket access after privilege drop
@@ -684,14 +538,14 @@ else
   echo "[build] Docker already in Dockerfile (already patched)"
 fi
 
-# ── 6. Build image ───────────────────────────────────────────────────
+# ── 3. Build image ───────────────────────────────────────────────────
 echo "[build] Building openclaw:local..."
 docker build \
   ${OPENCLAW_DOCKER_APT_PACKAGES:+--build-arg OPENCLAW_DOCKER_APT_PACKAGES="$OPENCLAW_DOCKER_APT_PACKAGES"} \
   -t openclaw:local .
 
-# ── 7. Restore patched files (keep git working tree clean) ───────────
-git checkout -- Dockerfile extensions/ src/infra/diagnostic-events.ts 2>/dev/null || true
+# ── 4. Restore patched files (keep git working tree clean) ───────────
+git checkout -- Dockerfile 2>/dev/null || true
 
 echo "[build] Done. Run: docker compose up -d openclaw-gateway"
 SCRIPTEOF
@@ -703,15 +557,10 @@ sudo chmod +x /home/openclaw/scripts/build-openclaw.sh
 
 ## 4.8b Build-Time Patches (Reference)
 
-The build script (4.8a) applies five patches inline using `sed` and `python3`. Each auto-skips when upstream fixes the issue:
+The build script (4.8a) applies two patches inline using `sed`. Each auto-skips when already applied:
 
-1. **Dockerfile extension deps** (upstream #7201): Copies `extensions/diagnostics-otel/package.json` before `pnpm install`
-2. **OTEL v2.x API compat** (upstream #3201):
-   - `@opentelemetry/resources` v2.x: `new Resource()` → `resourceFromAttributes()`
-   - `@opentelemetry/sdk-logs` v0.211+: `addLogRecordProcessor()` removed → pass `logRecordProcessors` in constructor
-3. **Diagnostic events dual-bundle fix**: `src/infra/diagnostic-events.ts` is bundled into both the gateway loader chunk and the plugin-sdk, creating two separate `listeners` Sets. Gateway events never reach plugin listeners. Fix: use `globalThis.__OPENCLAW_DIAG_LISTENERS__` so both bundles share one Set. Without this patch, OTEL traces and metrics don't work (logs work because they use a different code path).
-4. **Claude Code CLI**: Installs `@anthropic-ai/claude-code` globally via `npm install -g` so agents can invoke `claude` as a coding tool.
-5. **Docker + gosu**: Installs `docker.io` and `gosu` for nested Docker daemon (sandbox isolation via Sysbox). Adds node user to docker group for socket access after privilege drop.
+1. **Claude Code CLI**: Installs `@anthropic-ai/claude-code` globally via `npm install -g` so agents can invoke `claude` as a coding tool.
+2. **Docker + gosu**: Installs `docker.io` and `gosu` for nested Docker daemon (sandbox isolation via Sysbox). Adds node user to docker group for socket access after privilege drop.
 
 The build step also passes `OPENCLAW_DOCKER_APT_PACKAGES` as a `--build-arg` when set (upstream Dockerfile has an `ARG` that conditionally installs them).
 
@@ -876,6 +725,83 @@ sudo chmod +x /home/openclaw/openclaw/scripts/entrypoint-gateway.sh
 
 ---
 
+## 4.8d Create Host Alerter
+
+Install a host monitoring script that sends alerts via Telegram when disk, memory, or CPU thresholds are exceeded.
+
+> **Note:** Requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set in `openclaw-config.env`.
+
+```bash
+#!/bin/bash
+# Create host alert script
+sudo tee /home/openclaw/scripts/host-alert.sh << 'SCRIPTEOF'
+#!/bin/bash
+# Host alerter — checks disk, memory, CPU and sends Telegram alerts
+set -euo pipefail
+
+# Source config for Telegram credentials
+source /home/openclaw/openclaw-config.env 2>/dev/null || true
+
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+
+if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+  exit 0  # Silently skip if Telegram not configured
+fi
+
+HOSTNAME=$(hostname)
+ALERTS=""
+
+# Check disk usage (warn at 85%)
+DISK_USAGE=$(df / --output=pcent | tail -1 | tr -d ' %')
+if [ "$DISK_USAGE" -ge 85 ]; then
+  ALERTS="${ALERTS}⚠️ Disk usage: ${DISK_USAGE}%\n"
+fi
+
+# Check memory usage (warn at 90%)
+MEM_TOTAL=$(free -m | awk '/^Mem:/{print $2}')
+MEM_USED=$(free -m | awk '/^Mem:/{print $3}')
+MEM_PCT=$((MEM_USED * 100 / MEM_TOTAL))
+if [ "$MEM_PCT" -ge 90 ]; then
+  ALERTS="${ALERTS}⚠️ Memory usage: ${MEM_PCT}% (${MEM_USED}/${MEM_TOTAL} MB)\n"
+fi
+
+# Check 5-min load average vs CPU count
+CPU_COUNT=$(nproc)
+LOAD_AVG=$(awk '{print $2}' /proc/loadavg)
+LOAD_INT=$(echo "$LOAD_AVG" | awk -F. '{print $1}')
+if [ "$LOAD_INT" -ge "$CPU_COUNT" ]; then
+  ALERTS="${ALERTS}⚠️ Load average: ${LOAD_AVG} (CPUs: ${CPU_COUNT})\n"
+fi
+
+# Check if gateway container is running
+if ! docker ps --format '{{.Names}}' | grep -q '^openclaw-gateway$'; then
+  ALERTS="${ALERTS}🔴 openclaw-gateway container is NOT running\n"
+fi
+
+# Send alert if any issues found
+if [ -n "$ALERTS" ]; then
+  MESSAGE="🖥️ *${HOSTNAME} Alert*\n\n${ALERTS}"
+  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    -d chat_id="${TELEGRAM_CHAT_ID}" \
+    -d text="$(echo -e "$MESSAGE")" \
+    -d parse_mode="Markdown" > /dev/null 2>&1
+fi
+SCRIPTEOF
+
+sudo chmod +x /home/openclaw/scripts/host-alert.sh
+
+# Create cron entry — runs every 15 minutes as root
+sudo tee /etc/cron.d/openclaw-alerts << 'EOF'
+# OpenClaw host alerter — checks disk, memory, CPU, container health
+*/15 * * * * root /home/openclaw/scripts/host-alert.sh
+EOF
+
+sudo chmod 644 /etc/cron.d/openclaw-alerts
+```
+
+---
+
 ## 4.9 Build and Start OpenClaw
 
 ```bash
@@ -908,8 +834,11 @@ curl -s http://localhost:18789/ | head -5
 # Test health endpoint
 curl -s http://localhost:18789/health
 
-# Check Node Exporter
-curl -s http://localhost:9100/metrics | head -5
+# Check Vector is running
+sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker compose ps vector'
+
+# Check Vector logs
+sudo docker logs --tail 10 vector
 ```
 
 ---
@@ -965,7 +894,7 @@ docker network create --driver bridge --subnet 172.30.0.0/24 openclaw-gateway-ne
 
 The `openclaw update` CLI command does **not** work inside Docker — the `.git` directory is excluded by `.dockerignore`, so the update tool reports `not-git-install`. Instead, update by rebuilding from the host git repo using the build script.
 
-The build script auto-patches upstream issues and restores the git working tree after building, so `git pull` always works cleanly.
+The build script auto-patches the Dockerfile and restores the git working tree after building, so `git pull` always works cleanly.
 
 ```bash
 #!/bin/bash
@@ -983,8 +912,6 @@ sudo docker exec openclaw-gateway node dist/index.js --version
 ```
 
 > **Note:** Step 3 automatically stops the old container and starts a new one from the rebuilt image. Expect a brief gateway downtime during the restart.
->
-> When upstream fixes either patched issue (#7201 or #3201), the build script auto-detects and skips the corresponding patch. No manual intervention needed.
 
 ---
 
@@ -998,4 +925,3 @@ sudo docker exec openclaw-gateway node dist/index.js --version
 - Resource limits prevent runaway containers
 - Sysbox provides secure container-in-container isolation (user namespace, /proc, /sys virtualization)
 - Inner Docker socket group set to `docker`, node user is a member
-- Sandbox containers run with `network: "none"` — no outbound internet

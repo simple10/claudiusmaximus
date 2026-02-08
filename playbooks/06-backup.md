@@ -49,7 +49,6 @@ tar -czf "${BACKUP_FILE}" \
     .openclaw/credentials \
     .openclaw/workspace \
     openclaw/.env \
-    openclaw/promtail-positions \
     2>/dev/null || true
 
 # Set ownership so container can also access backups if needed
@@ -132,21 +131,6 @@ cat /home/openclaw/.openclaw/logs/backup.log
 | `.openclaw/credentials/` | API keys and tokens |
 | `.openclaw/workspace/` | User workspaces and data |
 | `openclaw/.env` | Environment variables |
-| `openclaw/promtail-positions/` | Promtail log positions (prevents duplicate log ingestion) |
-
-### VPS-2 (Observability)
-
-All persistent data lives under `/home/openclaw/monitoring/`. A single `rsync` of this directory captures configs and data:
-
-| Path | Description | Owner UID |
-|------|-------------|-----------|
-| `monitoring/data/prometheus/` | Metrics TSDB (30d retention) | 65534 (nobody) |
-| `monitoring/data/grafana/` | Dashboards, users, settings | 472 |
-| `monitoring/data/loki/` | Log chunks and index | 10001 |
-| `monitoring/data/tempo/` | Trace blocks and WAL | 10001 |
-| `monitoring/data/alertmanager/` | Alert silences and state | 65534 (nobody) |
-| `monitoring/*.yml` | Service configuration files | openclaw |
-| `monitoring/.env` | Grafana password | openclaw |
 
 ### Storage Convention
 

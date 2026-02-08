@@ -642,8 +642,8 @@ curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
 | `DISCORD_BOT_TOKEN` | Optional: Discord integration |
 | `OPENCLAW_CONFIG_DIR` | `/home/openclaw/.openclaw` |
 | `OPENCLAW_WORKSPACE_DIR` | `/home/openclaw/.openclaw/workspace` |
-| `OPENCLAW_GATEWAY_PORT` | `0.0.0.0:18789` — Must bind all interfaces for tunnel/proxy access |
-| `OPENCLAW_BRIDGE_PORT` | `0.0.0.0:18790` — Bridge API |
+| `OPENCLAW_GATEWAY_PORT` | `127.0.0.1:18789` — Localhost only; cloudflared connects from host |
+| `OPENCLAW_BRIDGE_PORT` | `127.0.0.1:18790` — Localhost only |
 | `OPENCLAW_GATEWAY_BIND` | `lan` |
 | `LOG_WORKER_URL` | Full URL to Log Receiver Worker (must include `/logs` path) |
 | `LOG_WORKER_TOKEN` | Bearer token for Log Receiver Worker authentication |
@@ -746,8 +746,8 @@ curl https://<worker-name>.<account>.workers.dev/health
 | Port | Binding | Service | Access |
 |------|---------|---------|--------|
 | 222/tcp | 0.0.0.0 | SSH | Public (key-only, adminclaw) |
-| 18789/tcp | 0.0.0.0 | Gateway | Via Cloudflare Tunnel (not directly exposed) |
-| 18790/tcp | 0.0.0.0 | Bridge API | Local |
+| 18789/tcp | 127.0.0.1 | Gateway | Via Cloudflare Tunnel (cloudflared on host) |
+| 18790/tcp | 127.0.0.1 | Bridge API | Local only |
 
 ### Docker Networks (VPS-1)
 

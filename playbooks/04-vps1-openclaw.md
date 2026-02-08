@@ -148,9 +148,10 @@ LOG_WORKER_TOKEN=${LOG_WORKER_TOKEN}
 # Docker compose variables (required by repo's docker-compose.yml)
 OPENCLAW_CONFIG_DIR=/home/openclaw/.openclaw
 OPENCLAW_WORKSPACE_DIR=/home/openclaw/.openclaw/workspace
-# Bind to 0.0.0.0 so cloudflared can reach the gateway on localhost
-OPENCLAW_GATEWAY_PORT=0.0.0.0:18789
-OPENCLAW_BRIDGE_PORT=0.0.0.0:18790
+# Bind to localhost — cloudflared runs on the host and connects to localhost:18789
+# UFW blocks external access anyway, but localhost binding adds defense-in-depth
+OPENCLAW_GATEWAY_PORT=127.0.0.1:18789
+OPENCLAW_BRIDGE_PORT=127.0.0.1:18790
 OPENCLAW_GATEWAY_BIND=lan
 
 # Extra apt packages baked into gateway image at build time (space-separated)

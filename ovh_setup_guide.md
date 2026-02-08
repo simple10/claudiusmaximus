@@ -6,12 +6,11 @@ This guide covers the manual steps you need to complete before handing off to Cl
 
 ## Overview
 
-You'll be setting up **two VPS-2 instances** on OVHCloud:
+You'll be setting up **a VPS instance** on OVHCloud:
 
 | VPS | Purpose | Hostname | IP (example) |
 |-----|---------|----------|--------------|
 | VPS-1 | OpenClaw (gateway + sandboxes) | `openclaw` | `51.x.x.1` |
-| VPS-2 | Observability (monitoring + logging) | `observe` | `51.x.x.2` |
 
 ---
 
@@ -44,9 +43,7 @@ chmod -R 600 ~/.ssh/*
 cat ~/.ssh/ovh_openclaw_ed25519.pub
 ```
 
-## Step 3: Order Two VPS-2 Instances
-
-### For each VPS
+## Step 3: Order a VPS Instance
 
 1. Navigate to **Bare Metal & VPS → VPS**
 2. Click **Configure your VPS** or select **VPS-2** ($6.75/mo)
@@ -58,7 +55,7 @@ cat ~/.ssh/ovh_openclaw_ed25519.pub
    | **Location** | Choose a **standard datacenter** (not Local Zone) — e.g., Vint Hill VA, Hillsboro OR, or EU |
    | **Operating System** | **Ubuntu 24.04 LTS** |
    | **SSH Key** | Add your public SSH key |
-   | **Hostname** | `openclaw` for VPS-1, `observe` for VPS-2 |
+   | **Hostname** | `openclaw` |
 
 ---
 
@@ -73,18 +70,15 @@ OVHCloud typically provisions VPSs within 5-15 minutes. You'll receive:
 
 1. Log into [OVHCloud Control Panel](https://manager.us.ovhcloud.com)
 2. Go to **Bare Metal Cloud → VPS**
-3. Note the **IPv4 addresses** for both VPSs
+3. Note the **IPv4 address** for your VPS
 
-Record them in openclaw-config.env:
+Record it in openclaw-config.env:
 
 ```bash
 # openclaw-config.env
 
 VPS1_IP=15.x.x.x
 VPS1_HOSTNAME=openclaw
-
-VPS2_IP=15.x.x.x
-VPS2_HOSTNAME=observe
 
 # SSH Configuration (required)
 SSH_KEY_PATH=~/.ssh/ovh_openclaw_ed25519 # Path to your ssh key generated in Step 2
@@ -96,7 +90,7 @@ SSH_PORT=22 # Initial SSH port, will get changed to 222 during hardening
 
 ## Step 5: Verify SSH Access
 
-Test SSH access to both VPSs from your local machine:
+Test SSH access to VPS-1 from your local machine:
 
 ```bash
 # Add ssh key for local sessions - needed for claude to do it's work
@@ -104,9 +98,6 @@ ssh-add ~/.ssh/ovh_openclaw_ed25519
 
 # Test VPS-1 (OpenClaw)
 ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-1-IP>
-
-# Test VPS-2 (Observability)
-ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-2-IP>
 ```
 
 On first connection, accept the host key fingerprint.
@@ -123,7 +114,7 @@ If you can't connect:
 
 ## Step 6: Verify System Requirements
 
-SSH into each VPS and run these checks:
+SSH into your VPS and run these checks:
 
 ```bash
 # Check Ubuntu version (should be 24.04)
@@ -171,12 +162,8 @@ ssh-add ~/.ssh/ovh_openclaw_ed25519
 # SSH to OpenClaw VPS (before deployment - default port 22)
 ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-1-IP>
 
-# SSH to Observability VPS (before deployment - default port 22)
-ssh -i ~/.ssh/ovh_openclaw_ed25519 ubuntu@<VPS-2-IP>
-
 # After claude deployment and hardening - use port 222 and adminclaw user
 ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS-1-IP>
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS-2-IP>
 ```
 
 ### OVHCloud Control Panel Links
@@ -195,10 +182,10 @@ ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS-2-IP>
 
 ## Checklist Before Claude Code
 
-- [ ] Both VPSs provisioned and running
-- [ ] SSH access verified to both VPSs
-- [ ] Ubuntu 24.04 LTS installed on both
-- [ ] Kernel version is 6.x on both
+- [ ] VPS provisioned and running
+- [ ] SSH access verified to VPS
+- [ ] Ubuntu 24.04 LTS installed
+- [ ] Kernel version is 6.x
 - [ ] Configuration file created (`~/openclaw-config.env`)
 - [ ] Anthropic API key ready
 - [ ] (Optional) Domain DNS records created

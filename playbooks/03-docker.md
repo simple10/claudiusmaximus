@@ -1,6 +1,6 @@
 # 03 - Docker Installation
 
-Install and harden Docker on both VPS instances.
+Install and harden Docker on VPS-1.
 
 ## Overview
 
@@ -12,7 +12,7 @@ This playbook configures:
 
 ## Prerequisites
 
-- [01-base-setup.md](01-base-setup.md) completed on both VPSs
+- [01-base-setup.md](01-base-setup.md) completed on VPS-1
 - SSH access as `adminclaw` on port 222
 
 ## Variables
@@ -23,7 +23,7 @@ No external variables required. Uses standard Docker installation.
 
 ## 3.1 Install Docker
 
-Run on: **Both VPSs**
+Run on: **VPS-1**
 
 ```bash
 #!/bin/bash
@@ -57,7 +57,7 @@ sudo systemctl start docker
 
 ## 3.2 Docker Daemon Hardening
 
-Run on: **Both VPSs**
+Run on: **VPS-1**
 
 ```bash
 #!/bin/bash

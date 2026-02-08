@@ -226,11 +226,8 @@ rclone sync /home/openclaw/.openclaw/backups remote:openclaw-backups
 ### Using rsync to another server
 
 ```bash
-# VPS-1: Backup OpenClaw config and data
+# Backup OpenClaw config and data
 rsync -avz /home/openclaw/.openclaw/ user@backup-server:/path/to/backups/vps1-openclaw/
-
-# VPS-2: Backup entire monitoring stack (configs + all persistent data)
-rsync -avz /home/openclaw/monitoring/ user@backup-server:/path/to/backups/vps2-monitoring/
 ```
 
 ---

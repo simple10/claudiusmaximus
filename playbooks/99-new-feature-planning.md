@@ -52,7 +52,7 @@ Create `plans/<feature-name>.md` using kebab-case naming.
 ---
 feature: <feature-name>
 type: base | optional
-target-vps: VPS-1 | VPS-2 | Both
+target-vps: VPS-1
 playbook: playbooks/99-new-feature-implementation.md
 ---
 

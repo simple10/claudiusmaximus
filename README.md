@@ -81,7 +81,7 @@ After deployment, claude can be used to make any changes or manage your VPS with
 | Log Receiver Worker | Cloudflare | Captures container logs |
 | Cloudflare Tunnel | VPS-1 -> Cloudflare | Zero exposed ports, origin IP hidden |
 
-No ports are exposed to the public internet when using the Cloudflare Tunnel networking option.
+No ports are exposed to the public internet.
 
 ---
 

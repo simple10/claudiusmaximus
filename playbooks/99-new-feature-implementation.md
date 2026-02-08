@@ -44,9 +44,6 @@ mkdir -p .state/tmp
 - `docker compose up -d` → failed: port already in use
   - Fixed by stopping conflicting container
   - Retry: success
-
-### VPS-2
-- `systemctl enable prometheus` → success
 ```
 
 The tracking file is for your reference during implementation. Use whatever format helps track progress and diagnose issues.
@@ -180,7 +177,6 @@ Present a summary to the user:
 **What was configured:**
 
 - VPS-1: ...
-- VPS-2: ...
 
 **Verification:** All checks passed
 

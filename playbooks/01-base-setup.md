@@ -1,6 +1,6 @@
 # 01 - Base Setup
 
-Base system configuration for both VPS-1 and VPS-2.
+Base system configuration for VPS-1.
 
 ## Overview
 
@@ -17,20 +17,18 @@ This playbook configures:
 
 - Fresh Ubuntu VPS with SSH access as `ubuntu` user
 - SSH key configured and accessible
-- VPS IPs known and reachable
+- VPS IP known and reachable
 
 ## Variables
 
 From `../openclaw-config.env`:
-- `VPS1_IP`, `VPS2_IP` - Public IPs of both VPSs
+- `VPS1_IP` - Public IP of VPS-1
 - `SSH_KEY_PATH` - Path to SSH private key
 - `SSH_USER` - Initial SSH user (ubuntu)
 
 ## Execution Order
 
-Complete sections 1.1-1.8 on VPS-1 first, then repeat on VPS-2.
-
-For UFW (1.3), use the rules specific to each VPS.
+Complete sections 1.1-1.8 on VPS-1.
 
 Connect initially as `ubuntu` (OVH default), then use `adminclaw` after section 1.5.
 
@@ -38,7 +36,7 @@ Connect initially as `ubuntu` (OVH default), then use `adminclaw` after section 
 
 ## 1.1 System Update & Essential Packages
 
-Run on: **Both VPSs**
+Run on: **VPS-1**
 
 ```bash
 #!/bin/bash
@@ -52,15 +50,14 @@ sudo apt install -y \
     curl wget git vim htop tmux unzip \
     ca-certificates gnupg lsb-release \
     apt-transport-https software-properties-common \
-    ufw fail2ban auditd \
-    wireguard wireguard-tools
+    ufw fail2ban auditd
 ```
 
 ---
 
 ## 1.2 Create Dedicated Users
 
-Run on: **Both VPSs**
+Run on: **VPS-1**
 
 This deployment uses a two-user security model:
 
@@ -125,11 +122,9 @@ sudo su - openclaw
 
 ## 1.3 UFW Firewall Setup
 
-Run on: **Both VPSs** (with VPS-specific rules)
+Run on: **VPS-1**
 
 **IMPORTANT**: Configure the firewall FIRST to allow port 222, then apply SSH hardening. This prevents lockout.
-
-### On VPS-1 (OpenClaw)
 
 ```bash
 #!/bin/bash
@@ -139,13 +134,6 @@ sudo ufw default allow outgoing
 # SSH - allow BOTH ports during transition (remove port 22 after verifying 222 works)
 sudo ufw allow 22/tcp
 sudo ufw allow 222/tcp
-
-# WireGuard
-sudo ufw allow 51820/udp
-
-# Allow Node Exporter metrics and gateway debugging from WireGuard
-sudo ufw allow from 10.0.0.0/24 to any port 9100
-sudo ufw allow from 10.0.0.0/24 to any port 18789
 
 # Enable
 sudo ufw --force enable
@@ -153,31 +141,11 @@ sudo ufw --force enable
 
 > **Note:** Port 443 is NOT opened here. Cloudflare Tunnel uses outbound connections only — no inbound ports needed.
 
-### On VPS-2 (Observability)
-
-```bash
-#!/bin/bash
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-
-# SSH - allow BOTH ports during transition (remove port 22 after verifying 222 works)
-sudo ufw allow 22/tcp
-sudo ufw allow 222/tcp
-
-# WireGuard
-sudo ufw allow 51820/udp
-
-# Enable
-sudo ufw --force enable
-```
-
-> **Note:** Port 443 is NOT opened here. The networking playbook will configure external access.
-
 ---
 
 ## 1.4 SSH Hardening
 
-Run on: **Both VPSs**
+Run on: **VPS-1**
 
 **IMPORTANT**: Ubuntu uses systemd socket activation for SSH. To change the SSH port, you must update BOTH the socket AND the sshd config.
 
@@ -251,7 +219,7 @@ ss -tlnp | grep 222
 
 **IMPORTANT**: Test SSH on port 222 BEFORE removing port 22 from the firewall.
 
-**NOTE**: Repeat this verification for EACH VPS before proceeding to later phases.
+**NOTE**: Verify this before proceeding to later phases.
 
 ```bash
 # From your LOCAL machine, test SSH on port 222 (using adminclaw, not openclaw)
@@ -267,7 +235,7 @@ sudo ufw status
 
 ## 1.6 Fail2ban Configuration
 
-Run on: **Both VPSs**
+Run on: **VPS-1**
 
 ```bash
 #!/bin/bash
@@ -295,7 +263,7 @@ sudo systemctl restart fail2ban
 
 ## 1.7 Automatic Security Updates
 
-Run on: **Both VPSs**
+Run on: **VPS-1**
 
 ```bash
 #!/bin/bash
@@ -321,7 +289,7 @@ sudo systemctl enable unattended-upgrades
 
 ## 1.8 Kernel Hardening
 
-Run on: **Both VPSs**
+Run on: **VPS-1**
 
 ```bash
 #!/bin/bash
@@ -370,12 +338,11 @@ sudo sysctl -p /etc/sysctl.d/99-security.conf
 
 ## Verification
 
-After completing all steps on both VPSs:
+After completing all steps on VPS-1:
 
 ```bash
 # Test SSH on port 222
 ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS1_IP> "echo 'VPS-1 OK'"
-ssh -i ~/.ssh/ovh_openclaw_ed25519 -p 222 adminclaw@<VPS2_IP> "echo 'VPS-2 OK'"
 
 # Verify UFW is active
 sudo ufw status

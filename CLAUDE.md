@@ -348,32 +348,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 
 ---
 
-## Key Deployment Notes
-
-1. **Two-user security model**: `adminclaw` for admin, `openclaw` for app
-2. **SSH port change**: Configure UFW BEFORE changing SSH to port 222
-3. **SSH on Ubuntu**: Keep `UsePAM yes`, use service name `ssh` not `sshd`
-4. **File ownership**: Container runs as uid 1000, `.openclaw` must be owned by uid 1000
-5. **OpenClaw config**: Keep `openclaw.json` minimal - rejects unknown keys
-6. **Gateway startup**: Use `--allow-unconfigured` flag for initial startup
-7. **Backup permissions**: Run as root via `/etc/cron.d/`
-8. **Bind mounts only:** Never use Docker named volumes -- use bind mounts (`./data/<service>:/path`) so `rsync` can back up everything from the host
-9. **Entrypoint script:** Gateway uses bind-mounted entrypoint that cleans lock files, bootstraps sandbox images, then runs `exec "$@"` (full command comes from compose override)
-10. **Self-restart:** `commands.restart: true` enables agents to modify config and trigger in-process restart via SIGUSR1
-11. **UI subpaths:** Configure `SUBPATH_OPENCLAW` in openclaw-config.env; gateway uses `controlUi.basePath`
-12. **Trusted proxies:** `gateway.trustedProxies: ["172.30.0.1"]` — cloudflared connects via Docker bridge. Only exact IPs work (no CIDR).
-13. **Device pairing:** New devices get "pairing required" on first connect. Approve via CLI: `sudo docker exec openclaw-gateway node dist/index.js devices approve <requestId>`. Once one device is paired, approve others from the Control UI.
-14. **Build script:** `scripts/build-openclaw.sh` auto-patches upstream Dockerfile before `docker build`, then restores git tree. Patches auto-skip when upstream fixes land
-15. **Rich sandbox:** `openclaw-sandbox-common:bookworm-slim` includes Node.js, git, and dev tools -- used as default sandbox image for agent tasks
-16. **Browser sandbox:** `openclaw-sandbox-browser:bookworm-slim` includes Chromium + noVNC -- browser tasks viewable through Control UI, no extra ports needed (proxied through gateway)
-17. **Gateway extras:** `OPENCLAW_DOCKER_APT_PACKAGES` in `.env` passes apt packages as `--build-arg` to Docker build. Claude Code CLI installed globally via Dockerfile patch
-18. **Config permissions:** Entrypoint enforces `chmod 600` on `openclaw.json` every startup -- gateway may rewrite with looser permissions on config changes
-19. **Docker-in-Docker:** Requires `user: "0:0"` and `read_only: false` in compose -- Sysbox maps uid 0 to unprivileged user on host, and auto-provisions `/var/lib/docker` and `/var/lib/containerd` (but they inherit `read_only`, so must be `false`). Entrypoint starts `dockerd`, then uses `gosu node` to drop privileges before gateway start.
-20. **Sandbox mode:** `sandbox.mode: "all"` requires Docker installed inside the container (build patch #5). Without Docker, `spawn docker` crashes the gateway with EACCES. Use `"non-main"` as fallback.
-21. **Vector log shipper:** Collects Docker container logs and ships to Log Receiver Worker. Config in `vector.toml`. Checkpoints in `./data/vector/` survive restarts.
-22. **AI Gateway Worker:** Routes LLM requests through Cloudflare AI Gateway for analytics. Real API keys live on the Worker, not on the VPS. Set `ANTHROPIC_BASE_URL` to the Worker URL.
-23. **Host alerter:** `scripts/host-alert.sh` runs via cron every 15 minutes. Checks disk, memory, CPU, Docker health. Sends Telegram alerts on threshold breach. Only alerts on state change (avoids spam).
-24. **Cloudflare Health Check:** Configure in Cloudflare dashboard on `https://<DOMAIN_OPENCLAW>/health` for uptime monitoring with email/webhook alerts.
+For detailed architecture, configuration, and gotchas, see [REQUIREMENTS.md](REQUIREMENTS.md).
 
 ---
 

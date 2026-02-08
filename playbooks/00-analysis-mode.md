@@ -77,8 +77,8 @@ mkdir -p .state
 Check for signs of optional features:
 
 ```bash
-# Example: Check if Tempo is installed (otel-tracing)
-docker ps | grep tempo
+# Example: Check if rich sandbox image exists (sandbox-and-browser)
+docker images | grep openclaw-sandbox-common
 
 # Add detection commands for each extras/ playbook as they're created
 ```
@@ -123,7 +123,7 @@ state: ready | error
 
 | Playbook | Status | Verified | Notes |
 |----------|--------|----------|-------|
-| extras/otel-tracing | ✓ | YYYY-MM-DD | |
+| extras/sandbox-and-browser | ✓ | YYYY-MM-DD | |
 
 ## Issues
 
@@ -155,7 +155,7 @@ Present findings to the user:
 
 **Base Playbooks:** 5/6 passing
 **Networking:** cloudflare-tunnel ✓
-**Optional Features:** 1 detected (otel-tracing ✓)
+**Optional Features:** 1 detected (sandbox-and-browser ✓)
 
 ### Issues Found
 

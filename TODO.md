@@ -11,14 +11,11 @@
 - [x] Update all playbooks for single-VPS architecture
 - [x] Update CLAUDE.md, REQUIREMENTS.md, README.md
 - [x] Create Workers deployment playbook (08-workers.md)
-- [x] Create VPS-2 decommission playbook (09-decommission-vps2.md)
-
 ## Next Steps
 
 - [ ] Deploy the AI Gateway worker & test end-to-end
 - [ ] Deploy the Log Receiver worker & test with Vector
 - [ ] Deploy single-VPS architecture on VPS-1
-- [ ] Run decommission playbook on VPS-2
 - [ ] Test ANTHROPIC_BASE_URL env var with OpenClaw/Anthropic SDK
 - [ ] Configure Cloudflare Health Check in dashboard
 

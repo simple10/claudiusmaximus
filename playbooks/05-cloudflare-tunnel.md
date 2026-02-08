@@ -36,7 +36,7 @@ This playbook configures:
 From `../openclaw-config.env`:
 
 - `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., openclaw.example.com)
-- `SUBPATH_OPENCLAW` - URL subpath for OpenClaw (default: empty for root)
+- `SUBPATH_OPENCLAW` - URL subpath for OpenClaw (from openclaw-config.env)
 
 ## Architecture
 

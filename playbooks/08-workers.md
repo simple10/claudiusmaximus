@@ -11,6 +11,7 @@ This playbook deploys:
 ## Prerequisites
 
 - [04-vps1-openclaw.md](04-vps1-openclaw.md) completed
+- [05-cloudflare-tunnel.md](05-cloudflare-tunnel.md) completed
 - Cloudflare account with Workers enabled
 - Node.js and npm installed locally
 - `wrangler` CLI available (installed as devDependency)

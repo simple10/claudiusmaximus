@@ -15,6 +15,7 @@ Single OVHCloud VPS running the OpenClaw gateway and sandboxes. Observability is
 | VPS-1 | `openclaw` | Gateway + Sandboxes | From `openclaw-config.env` |
 
 **Data flow:**
+
 - Users -> Cloudflare Edge -> Cloudflare Tunnel -> VPS-1 gateway (port 18789)
 - Users -> Cloudflare -> AI Gateway Worker (LLM proxy + analytics)
 - VPS-1 Vector -> Cloudflare Log Receiver Worker (log ingestion)
@@ -30,6 +31,7 @@ Single OVHCloud VPS running the OpenClaw gateway and sandboxes. Observability is
 **OS:** Ubuntu (OVHCloud VPS default)
 
 **Required packages:**
+
 ```
 curl wget git vim htop tmux unzip
 ca-certificates gnupg lsb-release apt-transport-https software-properties-common
@@ -46,6 +48,7 @@ ufw fail2ban auditd
 **Rationale:** If `openclaw` is compromised, the attacker cannot escalate to root. `adminclaw` is not a well-known username, reducing brute-force attack surface. Clear separation between admin tasks and application runtime.
 
 **Important:**
+
 - SSH keys are copied from the initial `ubuntu` user to `adminclaw` during setup
 - `openclaw` has no SSH access and no sudo — access via `sudo su - openclaw` or `sudo -u openclaw <cmd>`
 - Both users should have passwords set (for console access recovery only)
@@ -71,14 +74,17 @@ ufw fail2ban auditd
 | `AllowAgentForwarding` | `no` | Prevent agent forwarding |
 
 **Crypto settings:**
+
 - KexAlgorithms: `curve25519-sha256@libssh.org`, `diffie-hellman-group16-sha512`
 - Ciphers: `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`
 - MACs: `hmac-sha2-512-etm@openssh.com`, `hmac-sha2-256-etm@openssh.com`
 
 **Ubuntu systemd socket activation (critical):**
 Ubuntu uses socket activation for SSH. Changing the port requires BOTH:
+
 1. `/etc/ssh/sshd_config.d/hardening.conf` with `Port 222`
 2. Systemd socket override at `/etc/systemd/system/ssh.socket.d/override.conf`:
+
    ```
    [Socket]
    ListenStream=
@@ -121,6 +127,7 @@ The service name is `ssh` on Ubuntu, not `sshd`.
 **Config file:** `/etc/sysctl.d/99-security.conf`
 
 Key parameters:
+
 - `net.ipv4.conf.all.rp_filter = 1` — IP spoofing protection
 - `net.ipv4.icmp_echo_ignore_broadcasts = 1` — Ignore ICMP broadcast
 - `net.ipv4.conf.all.accept_source_route = 0` — Disable source routing
@@ -184,11 +191,13 @@ Key parameters:
 **Package:** `cloudflared` (installed from GitHub releases .deb)
 
 **Architecture:**
+
 - `cloudflared` makes outbound connections to Cloudflare edge
 - No inbound ports needed (port 443 stays closed)
 - DNS routes traffic: domain -> Cloudflare -> tunnel -> local service
 
 **VPS-1 tunnel:** Named `openclaw`
+
 - Routes `DOMAIN_OPENCLAW` -> `http://localhost:18789` (gateway)
 - `originRequest.noTLSVerify: true` (local HTTP, TLS at Cloudflare edge)
 
@@ -210,6 +219,7 @@ Key parameters:
 **Purpose:** User namespace isolation for Docker-in-Docker. Maps uid 0 inside container to an unprivileged uid on the host.
 
 **Key behaviors:**
+
 - Auto-provisions writable mounts at `/var/lib/sysbox/docker/<container-id>/` for `/var/lib/docker` and `/var/lib/containerd`
 - These auto-mounts inherit the container's `read_only` flag (important — see 3.4)
 - Provides equivalent security to `read_only: true` via user namespace isolation
@@ -247,12 +257,13 @@ Key parameters:
 │   ├── logs/
 │   └── backups/
 ├── .claude-sandbox/             # Sandbox Claude Code credentials (isolated from gateway)
-└── scripts/
+└── build/
     ├── build-openclaw.sh        # Build script with auto-patching
     └── host-alert.sh            # Cron alerter: disk/memory/CPU -> Telegram
 ```
 
 **Ownership:**
+
 - `/home/openclaw` and subdirs: `openclaw:openclaw`
 - `.openclaw/` contents: `uid 1000:1000` (container's `node` user, which is host `ubuntu` uid 1000)
 - **Known deviation:** `ubuntu` user (uid 1000) still exists alongside `openclaw` (uid 1002). Container files in `.openclaw` are owned by uid 1000 (ubuntu), not openclaw. This is correct for container compatibility.
@@ -282,15 +293,18 @@ Key parameters:
 | `/var/log` | 100M | `dockerd.log` (nested Docker daemon) |
 
 **Volumes (bind mounts):**
+
 - `./scripts/entrypoint-gateway.sh:/app/scripts/entrypoint-gateway.sh:ro` — Custom entrypoint
 - `/home/openclaw/.claude-sandbox:/home/node/.claude-sandbox` — Sandbox Claude credentials
 
 **Command:**
+
 ```
 node dist/index.js gateway --allow-unconfigured --bind lan --port 18789
 ```
 
 **Environment variables:**
+
 - `NODE_ENV=production`
 - `ANTHROPIC_API_KEY` — From `.env`
 - `TELEGRAM_BOT_TOKEN` — From `.env` (optional)
@@ -327,9 +341,11 @@ Patches upstream Dockerfile in-place before `docker build`, then `git checkout` 
 **Critical constraint:** Both patches MUST be inserted before `USER node` in the Dockerfile. After `USER node`, npm and apt can't write to system directories (EACCES).
 
 **Build args:**
+
 - `OPENCLAW_DOCKER_APT_PACKAGES` — Extra apt packages for gateway image (e.g., `"ffmpeg build-essential imagemagick"`)
 
 **Cleanup step:**
+
 ```bash
 git checkout -- Dockerfile 2>/dev/null || true
 ```
@@ -436,11 +452,13 @@ Four images built during first boot by the entrypoint script:
 | `openclaw-sandbox-claude:bookworm-slim` | Layered on common | Common + Claude Code CLI | ~600MB |
 
 **Claude sandbox build command:**
+
 ```bash
 printf 'FROM openclaw-sandbox-common:bookworm-slim\nUSER root\nRUN npm install -g @anthropic-ai/claude-code\nUSER 1000\n' | docker build -t openclaw-sandbox-claude:bookworm-slim -
 ```
 
 **Critical constraints:**
+
 - Do NOT use `docker build -f - /dev/null` — nested Docker (Sysbox) rejects `/dev/null` as build context. Use `printf ... | docker build -t tag -` instead.
 - Do NOT use `docker run`/`docker commit` to mutate images — creates a dirty layer. Use `docker build` with proper FROM layer.
 
@@ -449,6 +467,7 @@ printf 'FROM openclaw-sandbox-common:bookworm-slim\nUSER root\nRUN npm install -
 **Credential isolation:** Sandboxes use `/home/openclaw/.claude-sandbox` (NOT gateway's `/home/openclaw/.claude`). Gateway credentials are device-bound OAuth tokens that don't work across containers. Sandbox gets its own credentials via `claude login` (one-time setup).
 
 **Bind chain:**
+
 1. Host: `/home/openclaw/.claude-sandbox`
 2. -> Gateway container: `/home/node/.claude-sandbox` (via compose volume mount)
 3. -> Sandbox container: `/home/linuxbrew/.claude` (via openclaw.json `binds`)
@@ -515,6 +534,7 @@ retry_max_duration_secs = 300   # Keep retrying for 5 min on failures
 ```
 
 **Fields per event** (auto-included by `docker_logs` source):
+
 - `container_name`, `container_id`, `image`
 - `message` (the log line)
 - `stream` (stdout/stderr)
@@ -524,6 +544,7 @@ retry_max_duration_secs = 300   # Keep retrying for 5 min on failures
 **Checkpoint persistence:** `./data/vector/` stores checkpoint/position data. Survives container restarts, catches up from last position.
 
 **Crash recovery:**
+
 - Container crashes -> Docker captures stdout/stderr in JSON log files -> Vector catches up from checkpoint
 - Vector crashes -> `restart: always` brings it back -> reads from last checkpoint
 - VPS reboots -> compose `restart: always` -> Vector catches up from persisted checkpoints
@@ -543,12 +564,14 @@ retry_max_duration_secs = 300   # Keep retrying for 5 min on failures
 **Runs as:** root (needs access to system metrics)
 
 **Checks:**
+
 - Disk usage > 85%
 - Memory usage > 90%
 - Docker daemon health
 - Container crash count
 
 **Alert delivery:** Sends messages via Telegram Bot API:
+
 ```bash
 curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
   -d "chat_id=${TELEGRAM_CHAT_ID}" \
@@ -558,6 +581,7 @@ curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
 **State-based alerting:** Only alerts on state *change* (tracks last alert state in a file to avoid spam). Does not re-alert every 15 minutes for the same condition.
 
 **Required configuration:**
+
 - `TELEGRAM_BOT_TOKEN` — In `openclaw-config.env`
 - `TELEGRAM_CHAT_ID` — In `openclaw-config.env` (the chat/group ID to send alerts to)
 
@@ -571,6 +595,7 @@ curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
 **Schedule:** `0 3 * * *` (daily at 3 AM)
 
 **Files backed up:**
+
 - `.openclaw/openclaw.json` — Gateway config
 - `.openclaw/credentials/` — API keys, tokens
 - `.openclaw/workspace/` — User workspaces
@@ -585,17 +610,21 @@ curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
 ### 3.13 Device Pairing & Authentication
 
 **Flow:**
+
 1. User opens `https://<DOMAIN>/<SUBPATH>/chat?token=<TOKEN>`
 2. Token auth succeeds -> gateway checks device pairing
 3. If unpaired -> WebSocket closed with code `1008: pairing required`
 4. Admin approves via CLI:
+
    ```bash
    sudo docker exec openclaw-gateway node dist/index.js devices list
    sudo docker exec openclaw-gateway node dist/index.js devices approve <requestId>
    ```
+
 5. Browser auto-retries -> connects successfully
 
 **Important:**
+
 - Pending requests have 5-minute TTL. Browser retries create new requests.
 - Once one device is paired, subsequent devices can be approved from the Control UI.
 - Stored in `~/.openclaw/devices/pending.json`
@@ -676,6 +705,7 @@ Receives batched log events from Vector running on VPS-1. Each event is `console
 ```
 
 **Handler logic:**
+
 1. Validate auth (Bearer token)
 2. Read request body as text
 3. Split by newlines, parse each JSON line
@@ -701,6 +731,7 @@ npm run deploy
 ```
 
 **Verification:**
+
 ```bash
 curl https://<worker-name>.<account>.workers.dev/health
 # Returns: {"status":"ok"}
@@ -730,18 +761,21 @@ curl https://<worker-name>.<account>.workers.dev/health
 ## 6. Known Issues & Critical Gotchas
 
 ### Security & Access
+
 - **UsePAM must be `yes` on Ubuntu** — Setting it to `no` breaks SSH authentication entirely
 - **Ubuntu systemd socket activation** — SSH port change requires both `sshd_config` AND systemd socket override
 - **UFW before SSH port change** — Always configure UFW rules BEFORE changing SSH port to prevent lockout
 - **adminclaw can't cd into `/home/openclaw/`** — Directory is 750. Use `sudo -u openclaw bash -c "cd ... && ..."` or `sudo sh -c 'cd ... && ...'`
 
 ### Container & Docker
+
 - **`read_only: false` is required** for gateway container — Sysbox auto-mounts inherit this flag, and dockerd needs writable `/var/lib/docker`
 - **`user: "0:0"` is required** — Sysbox maps uid 0 to unprivileged host uid. Entrypoint drops to node via gosu.
 - **Container name is `openclaw-gateway`** (explicit `container_name`), not `openclaw-openclaw-gateway-1`
 - **No `openclaw` binary on PATH** — Use `node dist/index.js` instead. Full: `sudo docker exec openclaw-gateway node dist/index.js <subcommand>`
 
 ### Build & Patching
+
 - **Patches must go before `USER node`** in Dockerfile — npm/apt can't write to system dirs after user change
 - **Failed builds leave patches in place** — `git checkout` cleanup only runs on success. Manually restore before retry: `git checkout -- Dockerfile`
 - **`.env` values with spaces must be quoted** — `VAR=a b c` breaks `source .env`
@@ -749,17 +783,20 @@ curl https://<worker-name>.<account>.workers.dev/health
 - **Only 2 patches remain** — Claude Code CLI (#1) and Docker+gosu (#2). OTEL patches no longer needed.
 
 ### UID & Ownership
+
 - Host `ubuntu` is uid 1000, host `openclaw` is uid 1002. Container `node` is uid 1000.
 - Container files in `.openclaw` are owned by uid 1000 (matches `ubuntu`, not `openclaw`)
 - Sysbox remaps host uid 1000 to uid 1002 inside container — entrypoint `chown` fixes sandbox credentials
 - Backups must run as root (uid 1000 files not readable by openclaw uid 1002)
 
 ### Sandbox
+
 - **Do NOT use `docker build -f - /dev/null`** in Sysbox — rejects `/dev/null` as build context
 - **Do NOT use `docker run`/`docker commit`** — creates dirty layers. Use `docker build` with FROM.
 - **Entrypoint heredocs via SSH** mangle shebangs — use `scp` instead
 
 ### Vector (Log Shipping)
+
 - **`LOG_WORKER_URL` must include the `/logs` path** — Vector sends to this URL directly, it does not append any path. Example: `https://log-receiver.<account>.workers.dev/logs`
 - **Checkpoint recovery** — If `./data/vector/` is deleted, Vector will re-ship all available Docker logs from the beginning. This is safe (Worker is idempotent) but may cause a burst of log traffic.
 - **Docker socket required** — Vector needs `/var/run/docker.sock` mounted read-only to discover and tail container logs.

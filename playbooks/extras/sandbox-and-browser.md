@@ -5,6 +5,7 @@ Add rich sandbox (Node.js, git, dev tools), browser support (Chromium + noVNC), 
 ## Overview
 
 This playbook configures:
+
 - **Common sandbox image** — Pre-built `openclaw-sandbox-common:bookworm-slim` with Node.js, git, and dev tools (replaces minimal default for agent tasks)
 - **Browser sandbox image** — `openclaw-sandbox-browser:bookworm-slim` with Chromium and noVNC for web browsing tasks, viewable through the Control UI
 - **Gateway apt packages** — `ffmpeg`, `build-essential`, and `imagemagick` baked into the gateway Docker image at build time
@@ -57,6 +58,7 @@ fi
 ## E.2 Deploy Updated Build Script and Rebuild Gateway Image
 
 The build script adds three new features:
+
 - **Patch #4**: Installs Claude Code CLI (`@anthropic-ai/claude-code`) globally via `npm install -g`
 - **Patch #5**: Installs `docker.io` + `gosu` for nested Docker daemon (sandbox isolation via Sysbox). Adds node user to docker group for socket access after privilege drop.
 - **`--build-arg`**: Passes `OPENCLAW_DOCKER_APT_PACKAGES` to Docker build (upstream Dockerfile conditionally installs them)
@@ -64,9 +66,9 @@ The build script adds three new features:
 ```bash
 #!/bin/bash
 # Deploy updated build script from local repo
-# The script is maintained in scripts/build-openclaw.sh in this repo
+# The script is maintained in build/build-openclaw.sh in this repo
 # SCP it to VPS-1:
-scp -P ${SSH_PORT} scripts/build-openclaw.sh ${SSH_USER}@${VPS1_IP}:/tmp/build-openclaw.sh
+scp -P ${SSH_PORT} build/build-openclaw.sh ${SSH_USER}@${VPS1_IP}:/tmp/build-openclaw.sh
 
 # On VPS-1: install and set permissions
 sudo cp /tmp/build-openclaw.sh /home/openclaw/scripts/build-openclaw.sh
@@ -78,6 +80,7 @@ sudo -u openclaw bash -c 'source /home/openclaw/openclaw/.env && /home/openclaw/
 ```
 
 The build will:
+
 1. Apply patches 1-5 (each auto-skips if already fixed upstream)
 2. Pass `--build-arg OPENCLAW_DOCKER_APT_PACKAGES="ffmpeg build-essential imagemagick"` to Docker
 3. Install Claude Code CLI globally in the image
@@ -91,6 +94,7 @@ Expect the build to take 5-10 minutes (apt packages, Docker, and npm install add
 ## E.3 Deploy Updated Entrypoint Script
 
 The entrypoint now runs as root (`user: "0:0"` in compose) and handles:
+
 1. Lock file cleanup (existing)
 2. `openclaw.json` permissions fix (`chmod 600` if drifted)
 3. `.claude-sandbox` dir ownership fix (Sysbox uid remapping makes host uid appear shifted)
@@ -277,6 +281,7 @@ echo "Added .claude-sandbox bind mount"
 ```
 
 Key changes:
+
 - `user: "0:0"` — root inside container (Sysbox maps to unprivileged on host)
 - `read_only: false` — required because Sysbox auto-mounts inherit the read_only flag; dockerd can't write to `/var/lib/docker` with `read_only: true`
 - `/var/log` tmpfs — dockerd writes logs to `/var/log/dockerd.log`
@@ -334,6 +339,7 @@ Follow section 4.8 in `playbooks/04-vps1-openclaw.md` — it now includes the `a
 ```
 
 Key decisions:
+
 - `mode: "all"` — all agents (including main) run in sandboxes. Requires Docker installed inside the container (patch #5 in build script).
 - `network: "bridge"` — required for browser CDP connectivity. `"none"` breaks browser tool (gateway can't resolve CDP port). Sandbox containers are already double-isolated inside Sysbox nested Docker.
 - `tmpfs: ["/home/linuxbrew:uid=1000,gid=1000"]` — makes sandbox home dir writable (for `~/.claude.json` etc.) while keeping root filesystem read-only. The `uid=1000,gid=1000` options ensure the linuxbrew user can write. The `.claude` bind mount sits on top of the tmpfs.

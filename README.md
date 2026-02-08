@@ -232,7 +232,7 @@ openclaw-vps/
 ├── ovh_setup_guide.md        # OVHCloud account setup instructions
 ├── openclaw-config.env       # Configuration (contains secrets)
 ├── vector.toml               # Vector log shipper config
-├── scripts/
+├── build/
 │   ├── build-openclaw.sh     # Build script with auto-patching
 │   └── host-alert.sh         # Host monitoring + Telegram alerts
 ├── workers/

@@ -62,7 +62,8 @@ SSH_KEY_PATH=~/.ssh/ovh_openclaw_ed25519    # SSH private key path
 SSH_USER=adminclaw                          # SSH user (initially ubuntu then changed to adminclaw during hardening)
 SSH_PORT=222                                # SSH port (initially 22 then changed to 222 during hardening)
 OPENCLAW_DOMAIN=openclaw.example.com
-ANTHROPIC_API_KEY=sk-ant-...
+AI_GATEWAY_WORKER_URL=https://ai-gateway-proxy.<account>.workers.dev
+AI_GATEWAY_AUTH_TOKEN=<worker-auth-token>
 
 # URL subpaths (no trailing slash; empty string "" to serve at root)
 OPENCLAW_DOMAIN_PATH=/_openclaw
@@ -70,8 +71,6 @@ OPENCLAW_DOMAIN_PATH=/_openclaw
 # Workers
 LOG_WORKER_URL=https://log-receiver.<account>.workers.dev/logs
 LOG_WORKER_TOKEN=<generated-token>
-AI_GATEWAY_WORKER_URL=https://ai-gateway-proxy.<account>.workers.dev
-AI_GATEWAY_AUTH_TOKEN=<worker-auth-token>
 
 # Alerting
 TELEGRAM_BOT_TOKEN=
@@ -117,7 +116,8 @@ Required fields to check in openclaw-config.env:
 - `SSH_KEY_PATH` - Must exist on local system
 - `SSH_USER` - Must be set (typically `ubuntu` for fresh OVH VPS)
 - `OPENCLAW_DOMAIN` - Must be set
-- `ANTHROPIC_API_KEY` - Must be set, can be a placeholder
+- `AI_GATEWAY_WORKER_URL` - Must be set (AI Gateway Worker URL)
+- `AI_GATEWAY_AUTH_TOKEN` - Must be set (AI Gateway auth token)
 
 If any required field is missing, report all missing fields and ask user to update the file.
 

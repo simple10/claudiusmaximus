@@ -77,9 +77,9 @@ Note the Worker URL from the output (e.g., `https://ai-gateway-proxy.<account>.w
 On VPS-1, update the gateway's `.env` to route LLM requests through the Worker:
 
 ```bash
-# The ANTHROPIC_API_KEY on VPS becomes the Worker's AUTH_TOKEN
-# The ANTHROPIC_BASE_URL points to the Worker
-# This way, the real Anthropic key never touches the VPS
+# All provider API keys on the VPS are set to the Worker's AUTH_TOKEN
+# Anthropic and OpenAI base URLs point to the Worker
+# No real provider API keys ever touch the VPS
 ```
 
 Update `openclaw-config.env` with the Worker URL and auth token.

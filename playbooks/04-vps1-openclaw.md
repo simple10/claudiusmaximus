@@ -24,7 +24,8 @@ This playbook configures:
 
 From `../openclaw-config.env`:
 
-- `ANTHROPIC_API_KEY` - Required for OpenClaw
+- `AI_GATEWAY_WORKER_URL` - Required, AI Gateway Worker URL
+- `AI_GATEWAY_AUTH_TOKEN` - Required, AI Gateway auth token
 - `TELEGRAM_BOT_TOKEN` - Optional
 - `DISCORD_BOT_TOKEN` - Optional
 - `OPENCLAW_DOMAIN_PATH` - URL subpath for the gateway UI (default: `/_openclaw`)
@@ -125,8 +126,9 @@ EOF
 # Generate gateway token
 GATEWAY_TOKEN=$(openssl rand -hex 32)
 
-# Get API keys from config (set these variables before running)
-# ANTHROPIC_API_KEY=sk-ant-...
+# Get config values (set these variables before running)
+# AI_GATEWAY_WORKER_URL=https://ai-gateway-proxy.<account>.workers.dev
+# AI_GATEWAY_AUTH_TOKEN=<worker-auth-token>
 # TELEGRAM_BOT_TOKEN=...
 # DISCORD_BOT_TOKEN=...
 # LOG_WORKER_URL=...
@@ -136,8 +138,9 @@ sudo -u openclaw tee /home/openclaw/openclaw/.env << EOF
 # Gateway authentication
 OPENCLAW_GATEWAY_TOKEN=${GATEWAY_TOKEN}
 
-# Model provider
-ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+# AI Gateway — all provider API keys and base URLs are mapped in compose override
+AI_GATEWAY_WORKER_URL=${AI_GATEWAY_WORKER_URL}
+AI_GATEWAY_AUTH_TOKEN=${AI_GATEWAY_AUTH_TOKEN}
 
 # Channels (add as needed)
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
@@ -232,7 +235,20 @@ services:
       - no-new-privileges:true
     environment:
       - NODE_ENV=production
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # AI Gateway: route all LLM providers through the Worker.
+      # All API keys -> AUTH_TOKEN, Anthropic/OpenAI base URLs -> Worker URL.
+      # Providers the Worker doesn't handle yet will fail at the Worker (404),
+      # preventing requests from leaking to default provider endpoints.
+      - ANTHROPIC_API_KEY=${AI_GATEWAY_AUTH_TOKEN}
+      - ANTHROPIC_BASE_URL=${AI_GATEWAY_WORKER_URL}
+      - OPENAI_API_KEY=${AI_GATEWAY_AUTH_TOKEN}
+      - OPENAI_BASE_URL=${AI_GATEWAY_WORKER_URL}
+      - GOOGLE_API_KEY=${AI_GATEWAY_AUTH_TOKEN}
+      - XAI_API_KEY=${AI_GATEWAY_AUTH_TOKEN}
+      - GROQ_API_KEY=${AI_GATEWAY_AUTH_TOKEN}
+      - CEREBRAS_API_KEY=${AI_GATEWAY_AUTH_TOKEN}
+      - MISTRAL_API_KEY=${AI_GATEWAY_AUTH_TOKEN}
+      - OPENROUTER_API_KEY=${AI_GATEWAY_AUTH_TOKEN}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TZ=UTC
     networks:

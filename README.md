@@ -44,7 +44,7 @@ After deployment, claude can be used to make any changes or manage your VPS with
     - Minimum: 5.12+ kernel
     - Recommended: Ubuntu 24.04+
   - Root SSH support - claude needs to be able to SSH into the server
-- **Anthropic API Key** - needed by OpenClaw to run onboarding process
+- **AI Gateway Worker** - proxies all LLM requests (real API keys live on the Worker, never on the VPS)
 - **Domain** - needed for Cloudflare Tunnel
 - **Cloudflare Account** - for Workers (log receiver, AI gateway) and Tunnel
 
@@ -115,15 +115,15 @@ cp openclaw-config.env.example openclaw-config.env
 
 Then, add your VPS IP and other values to the config file.
 
-### Step 2.1: Add Keys for OpenClaw (for messaging channels)
+### Step 2.1: Configure AI Gateway & Keys
 
-These can be optionally added after deploy. Anthropic Key is required for OpenClaw to initialize.
-Messaging channel keys are not needed if using the OpenClaw UI for chat.
+The AI Gateway Worker proxies all LLM requests through Cloudflare. Real provider API keys are configured as Worker secrets (via `wrangler secret put`) and never stored on the VPS.
 
-- [ ] **Anthropic API key**: `sk-ant-...` (from [console.anthropic.com](https://console.anthropic.com))
-- [ ] **Telegram Bot Token**: Create via [@BotFather](https://t.me/BotFather)
-- [ ] **Discord Bot Token**: From [Discord Developer Portal](https://discord.com/developers/applications)
-- [ ] **Slack Bot Token**: From [Slack API](https://api.slack.com/apps)
+- [ ] **AI Gateway Worker URL**: Deploy the Worker first (see `playbooks/08-workers.md`), then set `AI_GATEWAY_WORKER_URL`
+- [ ] **AI Gateway Auth Token**: Set `AI_GATEWAY_AUTH_TOKEN` to the Worker's `AUTH_TOKEN` secret
+- [ ] **Telegram Bot Token** (optional): Create via [@BotFather](https://t.me/BotFather)
+- [ ] **Discord Bot Token** (optional): From [Discord Developer Portal](https://discord.com/developers/applications)
+- [ ] **Slack Bot Token** (optional): From [Slack API](https://api.slack.com/apps)
 
 Fill in your actual values in openclaw-config.env.
 
@@ -289,7 +289,7 @@ openclaw-vps/
 - **Adminclaw user** has passwordless sudo for automation
 - Gateway token should be kept secret - it provides admin access
 - The `.gitignore` excludes `*.env` and `certs/` by default
-- Real API keys stay in Cloudflare Workers (never on the VPS when using AI Gateway)
+- Real API keys stay in Cloudflare Workers (never on the VPS)
 - No ports exposed to the internet (Cloudflare Tunnel uses outbound connections only)
 
 ---

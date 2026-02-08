@@ -16,7 +16,7 @@
 - [ ] Deploy the AI Gateway worker & test end-to-end
 - [ ] Deploy the Log Receiver worker & test with Vector
 - [ ] Deploy single-VPS architecture on VPS-1
-- [ ] Test ANTHROPIC_BASE_URL env var with OpenClaw/Anthropic SDK
+- [ ] Test AI Gateway routing end-to-end (all provider keys via AI_GATEWAY_AUTH_TOKEN)
 - [ ] Configure Cloudflare Health Check in dashboard
 
 ## Future

@@ -306,7 +306,11 @@ node dist/index.js gateway --allow-unconfigured --bind lan --port 18789
 **Environment variables:**
 
 - `NODE_ENV=production`
-- `ANTHROPIC_API_KEY` — From `.env`
+- `ANTHROPIC_API_KEY` — Set to `AI_GATEWAY_AUTH_TOKEN` (Worker auth, not a real Anthropic key)
+- `ANTHROPIC_BASE_URL` — Set to `AI_GATEWAY_WORKER_URL` (routes requests through Worker)
+- `OPENAI_API_KEY` — Set to `AI_GATEWAY_AUTH_TOKEN`
+- `OPENAI_BASE_URL` — Set to `AI_GATEWAY_WORKER_URL`
+- `GOOGLE_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY` — All set to `AI_GATEWAY_AUTH_TOKEN` (prevents real key leakage; unsupported providers fail at Worker with 404)
 - `TELEGRAM_BOT_TOKEN` — From `.env` (optional)
 - `TZ=UTC`
 
@@ -637,7 +641,8 @@ curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
 | Variable | Purpose |
 |----------|---------|
 | `OPENCLAW_GATEWAY_TOKEN` | 64-char hex token for URL-based auth |
-| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `AI_GATEWAY_WORKER_URL` | AI Gateway Worker URL (all LLM base URLs point here) |
+| `AI_GATEWAY_AUTH_TOKEN` | AI Gateway auth token (used as all provider API keys) |
 | `TELEGRAM_BOT_TOKEN` | Optional: Telegram integration |
 | `DISCORD_BOT_TOKEN` | Optional: Discord integration |
 | `OPENCLAW_CONFIG_DIR` | `/home/openclaw/.openclaw` |

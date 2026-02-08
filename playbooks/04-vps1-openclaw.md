@@ -324,15 +324,13 @@ sudo -u openclaw mkdir -p /home/openclaw/openclaw/data/vector
 # sudo docker exec openclaw-gateway node dist/index.js gateway --help 2>&1 | grep -i restart
 # If OpenClaw rejects the key, remove the "commands" block below.
 
-# trustedProxies (Cloudflare Tunnel only):
-#   cloudflared connects via Docker bridge (172.30.0.1). Without this, gateway
-#   rejects X-Forwarded-* headers from the tunnel.
-#   Not needed for Caddy (host network, connects from localhost).
+# trustedProxies: cloudflared connects via Docker bridge (172.30.0.1). Without this,
+#   gateway rejects X-Forwarded-* headers from the tunnel.
 #   NOTE: Only exact IPs work — CIDR ranges are NOT supported.
 #
 # Device pairing:
 #   New devices must be approved before they can connect. The gateway's auto-approve
-#   only works for localhost connections, so tunnel/Caddy users need CLI approval:
+#   only works for localhost connections, so tunnel users need CLI approval:
 #
 #   1. User opens https://<DOMAIN>/chat?token=<TOKEN> → gets "pairing required"
 #   2. Admin approves via SSH:
@@ -343,11 +341,6 @@ sudo -u openclaw mkdir -p /home/openclaw/openclaw/data/vector
 #   Once one device is paired, subsequent devices can be approved from the Control UI.
 #   Pending requests expire after 5 minutes — the browser retries and creates new ones.
 
-# Choose config based on networking option:
-# - Cloudflare Tunnel: trustedProxies needed
-# - Caddy: no trustedProxies needed
-
-if [ "${NETWORKING_OPTION}" = "cloudflare-tunnel" ]; then
 sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
 {
   "commands": {
@@ -413,74 +406,6 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
   }
 }
 JSONEOF
-else
-# Caddy: no trustedProxies needed (Caddy on host network connects from localhost).
-# Device pairing: approve via CLI (see comment above).
-sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
-{
-  "commands": {
-    "restart": true
-  },
-  "gateway": {
-    "bind": "lan",
-    "mode": "local",
-    "controlUi": {
-      "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}"
-    }
-  },
-  "agents": {
-    "defaults": {
-      "sandbox": {
-        "mode": "all",
-        "scope": "agent",
-        "docker": {
-          "image": "openclaw-sandbox-claude:bookworm-slim",
-          "containerPrefix": "openclaw-sbx-",
-          "workdir": "/workspace",
-          "readOnlyRoot": true,
-          "tmpfs": ["/tmp", "/var/tmp", "/run", "/home/linuxbrew:uid=1000,gid=1000"],
-          "network": "bridge",
-          "user": "1000:1000",
-          "capDrop": ["ALL"],
-          "env": { "LANG": "C.UTF-8" },
-          "pidsLimit": 256,
-          "memory": "1g",
-          "memorySwap": "2g",
-          "cpus": 1,
-          "binds": [
-            "/home/node/.claude-sandbox:/home/linuxbrew/.claude"
-          ]
-        },
-        "browser": {
-          "enabled": true,
-          "image": "openclaw-sandbox-browser:bookworm-slim",
-          "containerPrefix": "openclaw-sbx-browser-",
-          "cdpPort": 9222,
-          "vncPort": 5900,
-          "noVncPort": 6080,
-          "headless": false,
-          "enableNoVnc": true,
-          "autoStart": true,
-          "autoStartTimeoutMs": 12000
-        },
-        "prune": {
-          "idleHours": 168,
-          "maxAgeDays": 60
-        }
-      }
-    }
-  },
-  "tools": {
-    "sandbox": {
-      "tools": {
-        "allow": ["exec", "process", "read", "write", "edit", "apply_patch", "browser", "sessions_list", "sessions_history", "sessions_send", "sessions_spawn", "session_status"],
-        "deny": ["canvas", "nodes", "cron", "discord", "gateway"]
-      }
-    }
-  }
-}
-JSONEOF
-fi
 
 # Ensure container (uid 1000) can read/write, and not world-readable
 sudo chown 1000:1000 /home/openclaw/.openclaw/openclaw.json

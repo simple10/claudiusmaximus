@@ -15,7 +15,7 @@ After `07-verification.md` confirms all services are healthy, this playbook walk
 
 - `07-verification.md` completed successfully
 - OpenClaw gateway running on VPS-1
-- Networking (Cloudflare Tunnel or Caddy) configured and active
+- Cloudflare Tunnel configured and active (05-cloudflare-tunnel.md)
 - Browser available on your local machine
 
 ---
@@ -47,9 +47,8 @@ Tell the user to open the URL in their browser.
 
 **If the page doesn't load at all (connection error or timeout):**
 
-1. Check the tunnel/Caddy is running:
-   - Cloudflare Tunnel: `ssh ... "sudo systemctl status cloudflared"`
-   - Caddy: `ssh ... "sudo docker ps | grep caddy"`
+1. Check the tunnel is running:
+   - `ssh ... "sudo systemctl status cloudflared"`
 2. Check the gateway is running: `ssh ... "sudo docker ps | grep openclaw-gateway"`
 3. Check gateway logs: `ssh ... "sudo docker logs --tail 20 openclaw-gateway"`
 4. Verify DNS is resolving to the correct destination
@@ -160,7 +159,7 @@ Present this reference block for the user to save:
 
 ### "Connection refused" when opening the URL
 
-- Tunnel or Caddy is not running, or DNS is not configured correctly.
+- Tunnel is not running, or DNS is not configured correctly.
 - Check `07-verification.md` section 7.6 for networking verification steps.
 
 ### Token is rejected (401/403)

@@ -290,7 +290,7 @@ Key changes:
 
 Add `agents` and `tools` blocks to enable rich sandboxes and browser support. The config uses `openclaw-sandbox-claude:bookworm-slim` as the default sandbox image (layered on common, adds Claude Code CLI) and enables the browser tool with Chromium + noVNC.
 
-> **Important:** This replaces the existing `openclaw.json`. Make sure to use the correct variant for your networking option (Cloudflare Tunnel or Caddy).
+> **Important:** This replaces the existing `openclaw.json`. Make sure to preserve the `trustedProxies` setting required for Cloudflare Tunnel.
 
 Follow section 4.8 in `playbooks/04-vps1-openclaw.md` — it now includes the `agents` and `tools` blocks. The key additions are:
 

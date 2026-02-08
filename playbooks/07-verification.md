@@ -14,7 +14,7 @@ This playbook verifies:
 ## Prerequisites
 
 - All previous playbooks completed
-- Networking playbook (cloudflare-tunnel or caddy) completed
+- 05-cloudflare-tunnel.md completed
 - Workers deployed (08-workers.md)
 - VPS-1 rebooted after configuration
 
@@ -106,11 +106,7 @@ curl -s https://<AI_GATEWAY_WORKER_URL>/health
 
 ---
 
-## 7.4 Verify External Access
-
-The specific tests depend on which networking option you chose.
-
-### If using Cloudflare Tunnel
+## 7.4 Verify External Access (Cloudflare Tunnel)
 
 ```bash
 # On VPS-1, verify tunnel is running
@@ -121,19 +117,6 @@ curl -s https://claw.example.com<SUBPATH_OPENCLAW>/ | head -5
 
 # Verify direct IP access is blocked
 curl -sk --connect-timeout 5 https://<VPS1-IP>/ || echo "Direct access blocked (expected)"
-```
-
-### If using Caddy
-
-```bash
-# On VPS-1, verify Caddy is running
-sudo docker ps | grep caddy
-
-# Test HTTPS locally
-curl -sk https://localhost:443<SUBPATH_OPENCLAW>/ | head -5
-
-# Verify port 80 is blocked
-curl -s --connect-timeout 3 http://localhost:80/ || echo "Port 80 blocked (expected)"
 ```
 
 ---

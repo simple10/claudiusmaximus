@@ -178,19 +178,6 @@ sudo ufw delete allow 443/tcp
 sudo ufw status
 ```
 
-### Step 9: Stop and Remove Caddy (if installed)
-
-Since Cloudflare Tunnel handles TLS termination, Caddy is no longer needed:
-
-```bash
-# Stop and remove Caddy container (if running)
-sudo docker stop caddy 2>/dev/null || true
-sudo docker rm caddy 2>/dev/null || true
-
-# Remove Caddy volumes (optional)
-sudo docker volume rm caddy_data caddy_config 2>/dev/null || true
-```
-
 ---
 
 ## Cloudflare Access Configuration (Optional)
@@ -278,24 +265,6 @@ sudo -u openclaw docker compose ps
 
 # Check it's listening on localhost
 curl -s http://localhost:18789/
-```
-
-### Reverting to Direct Access
-
-If you need to revert:
-
-```bash
-# Stop cloudflared
-sudo systemctl stop cloudflared
-sudo systemctl disable cloudflared
-
-# Re-enable port 443
-sudo ufw allow 443/tcp
-
-# Restart Caddy (if still installed) or reinstall
-# See networking/caddy.md
-
-# Update Cloudflare DNS back to A record pointing to VPS IP
 ```
 
 ---

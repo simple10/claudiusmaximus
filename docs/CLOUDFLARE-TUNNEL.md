@@ -48,9 +48,9 @@ This document describes how to secure OpenClaw behind Cloudflare Tunnel, elimina
 
 ## Installation Steps
 
-Claude performs the setup of the tunnels in the [networking/cloudflare-tunnel.md](../playbooks/networking/cloudflare-tunnel.md) playbook.
+Claude performs the setup of the tunnel in the [05-cloudflare-tunnel.md](../playbooks/05-cloudflare-tunnel.md) playbook.
 
-1. Claude creates two tunnels: one for each VPS
+1. Claude creates a tunnel for VPS-1
 2. Claude prompts user to authorize the tunnel with a link during setup
 
 After deployment, user needs to configure Cloudflare Access (see below).

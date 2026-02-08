@@ -38,11 +38,9 @@ Use this playbook when connecting to VPSs that may already have OpenClaw deploye
 
 Ask the user:
 
-> "Which VPS(s) should I analyze?"
+> "What should I analyze?"
 >
-> - **Both** - Analyze VPS-1 and VPS-2
-> - **VPS-1 only** - OpenClaw server
-> - **VPS-2 only** - Observability server
+> - **Full analysis** - Analyze VPS-1 (all playbooks)
 > - **Single playbook** - Verify specific playbook only
 
 If single playbook, ask which one.
@@ -62,7 +60,7 @@ mkdir -p .state
 
 **For networking playbooks:**
 
-- Use the Verification section in `networking/cloudflare-tunnel.md` or `networking/caddy.md`
+- Use the Verification section in `05-cloudflare-tunnel.md`
 
 **For optional features (`extras/`):**
 
@@ -110,9 +108,9 @@ state: ready | error
 | Playbook | Status | Verified | Notes |
 |----------|--------|----------|-------|
 | 01-base-setup | ✓ | YYYY-MM-DD | |
-| 02-wireguard | ✓ | YYYY-MM-DD | |
 | 03-docker | ✓ | YYYY-MM-DD | |
 | 04-vps1-openclaw | ✓ | YYYY-MM-DD | |
+| 05-cloudflare-tunnel | ✓ | YYYY-MM-DD | |
 | 06-backup | ✗ | YYYY-MM-DD | Cron job missing |
 
 ## Networking

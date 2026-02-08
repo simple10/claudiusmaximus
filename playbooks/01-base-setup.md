@@ -151,7 +151,7 @@ sudo ufw allow from 10.0.0.0/24 to any port 18789
 sudo ufw --force enable
 ```
 
-> **Note:** Port 443 is NOT opened here. The networking playbook (cloudflare-tunnel or caddy) will configure external access.
+> **Note:** Port 443 is NOT opened here. Cloudflare Tunnel uses outbound connections only — no inbound ports needed.
 
 ### On VPS-2 (Observability)
 

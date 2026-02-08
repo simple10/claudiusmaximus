@@ -20,12 +20,10 @@ All deployment steps are in modular playbooks under `playbooks/`:
 | `01-base-setup.md` | Users, SSH, UFW, fail2ban, kernel |
 | `03-docker.md` | Docker installation and hardening |
 | `04-vps1-openclaw.md` | Sysbox, networks, gateway, Vector |
-| `networking/cloudflare-tunnel.md` | Cloudflare Tunnel (VPS-1 only) |
-| `networking/caddy.md` | Caddy reverse proxy with Origin CA (VPS-1 only) |
+| `05-cloudflare-tunnel.md` | Cloudflare Tunnel setup |
 | `06-backup.md` | Backup scripts and cron jobs |
 | `07-verification.md` | Testing and verification |
 | `08-workers.md` | Cloudflare Workers deployment (AI Gateway + Log Receiver) |
-| `09-decommission-vps2.md` | VPS-2 decommission steps |
 | `98-post-deploy.md` | First access & device pairing |
 | `99-new-feature-planning.md` | Process for planning new features |
 | `99-new-feature-implementation.md` | Process for implementing planned features |
@@ -63,7 +61,6 @@ VPS1_IP=X.X.X.X                             # VPS-1 public IP
 SSH_KEY_PATH=~/.ssh/ovh_openclaw_ed25519    # SSH private key path
 SSH_USER=adminclaw                          # SSH user (initially ubuntu then changed to adminclaw during hardening)
 SSH_PORT=222                                # SSH port (initially 22 then changed to 222 during hardening)
-NETWORKING_OPTION=cloudflare-tunnel         # or "caddy"
 DOMAIN_OPENCLAW=openclaw.example.com
 ANTHROPIC_API_KEY=sk-ant-...
 
@@ -157,18 +154,7 @@ Present the main options:
 
 ### Path A: New Deployment
 
-#### A1. Networking Option
-
-If `NETWORKING_OPTION` is not set in config:
-
-> "Which networking solution do you want to use?"
->
-> - **cloudflare-tunnel** (Recommended) - Zero exposed ports, origin IP hidden
-> - **caddy** - Port 443 exposed, uses Cloudflare Origin CA
-
-Save the selection to `openclaw-config.env`.
-
-#### A2. Playbook Selection
+#### A1. Playbook Selection
 
 Present playbook selection:
 
@@ -176,22 +162,22 @@ Present playbook selection:
 >
 > **Core deployment** (selected by default):
 >
-> - [x] Base deployment (01, 03, 04, networking, 06-08)
->   - Includes: base-setup, docker, openclaw, networking, backup, workers, verification
+> - [x] Base deployment (01, 03, 04, 05, 06-08)
+>   - Includes: base-setup, docker, openclaw, cloudflare-tunnel, backup, workers, verification
 >
 > **Optional features** (from `playbooks/extras/`):
 >
 > - [ ] Sandbox & Browser (`extras/sandbox-and-browser.md`) — Rich sandbox, browser, gateway packages, Claude Code CLI
 
-#### A3. Confirmation
+#### A2. Confirmation
 
 Show summary and confirm:
 
 > "Ready to deploy:
 >
 > - VPS-1: `<VPS1_IP>` (OpenClaw)
-> - Networking: `<NETWORKING_OPTION>`
 > - Domain: `<DOMAIN_OPENCLAW>`
+> - Networking: Cloudflare Tunnel
 > - Playbooks: Base deployment
 >
 > Proceed?"
@@ -263,7 +249,7 @@ After action selection, show summary:
 2. Execute 01-base-setup.md on VPS-1
 3. Execute 03-docker.md on VPS-1
 4. Execute 04-vps1-openclaw.md on VPS-1
-5. Execute networking/<NETWORKING_OPTION>.md on VPS-1
+5. Execute 05-cloudflare-tunnel.md on VPS-1
 6. Execute 06-backup.md on VPS-1
 7. Execute 08-workers.md (deploy Cloudflare Workers)
 8. Reboot VPS-1
@@ -272,48 +258,6 @@ After action selection, show summary:
 ```
 
 All steps are sequential on a single VPS. Workers deployment (step 7) runs from the local machine using `wrangler`.
-
----
-
-## Networking Options
-
-### Cloudflare Tunnel (Recommended)
-
-Use when:
-
-- Maximum security is priority
-- Origin IP must be hidden
-- No ports should be exposed
-
-**Prerequisites:** Cloudflare account, domain DNS managed by Cloudflare
-**Certificates needed:** None - tunnel handles TLS automatically
-
-Benefits:
-
-- Zero exposed ports (443 closed)
-- Origin IP hidden from attackers
-- Built-in DDoS protection
-- Cloudflare Access for authentication
-
-Execute: `playbooks/networking/cloudflare-tunnel.md` (VPS-1 only)
-
-### Caddy Reverse Proxy
-
-Use when:
-
-- Simpler setup preferred
-- No Cloudflare account available
-- Direct origin access needed
-
-**Prerequisites:** Cloudflare account, Origin CA certificate generated
-**Certificates needed:** Yes - must generate in Cloudflare Dashboard first
-
-Trade-offs:
-
-- Port 443 exposed
-- Origin IP discoverable
-
-Execute: `playbooks/networking/caddy.md` (VPS-1 only)
 
 ---
 
@@ -397,7 +341,7 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 |-------|------------------|
 | SSH lockout | `01-base-setup.md` -> Troubleshooting |
 | Container won't start | `04-vps1-openclaw.md` -> Troubleshooting |
-| Tunnel not starting | `networking/cloudflare-tunnel.md` -> Troubleshooting |
+| Tunnel not starting | `05-cloudflare-tunnel.md` -> Troubleshooting |
 | Backup permission denied | `06-backup.md` -> Troubleshooting |
 | Worker deployment fails | `08-workers.md` -> Troubleshooting |
 | Vector not shipping logs | `04-vps1-openclaw.md` -> Troubleshooting |
@@ -416,8 +360,8 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 8. **Bind mounts only:** Never use Docker named volumes -- use bind mounts (`./data/<service>:/path`) so `rsync` can back up everything from the host
 9. **Entrypoint script:** Gateway uses bind-mounted entrypoint that cleans lock files, bootstraps sandbox images, then runs `exec "$@"` (full command comes from compose override)
 10. **Self-restart:** `commands.restart: true` enables agents to modify config and trigger in-process restart via SIGUSR1
-11. **UI subpaths:** Configure `SUBPATH_OPENCLAW` in openclaw-config.env; gateway uses `controlUi.basePath`; Caddy must use `handle` (not `handle_path`) to preserve the prefix
-12. **Trusted proxies:** `gateway.trustedProxies: ["172.30.0.1"]` for Cloudflare Tunnel (cloudflared connects via Docker bridge). Not needed for Caddy (host network). Only exact IPs work (no CIDR).
+11. **UI subpaths:** Configure `SUBPATH_OPENCLAW` in openclaw-config.env; gateway uses `controlUi.basePath`
+12. **Trusted proxies:** `gateway.trustedProxies: ["172.30.0.1"]` — cloudflared connects via Docker bridge. Only exact IPs work (no CIDR).
 13. **Device pairing:** New devices get "pairing required" on first connect. Approve via CLI: `sudo docker exec openclaw-gateway node dist/index.js devices approve <requestId>`. Once one device is paired, approve others from the Control UI.
 14. **Build script:** `scripts/build-openclaw.sh` auto-patches upstream Dockerfile before `docker build`, then restores git tree. Patches auto-skip when upstream fixes land
 15. **Rich sandbox:** `openclaw-sandbox-common:bookworm-slim` includes Node.js, git, and dev tools -- used as default sandbox image for agent tasks
@@ -454,13 +398,6 @@ Each playbook contains detailed troubleshooting sections. Common issues:
 - [ ] Tunnel running on VPS-1
 - [ ] DNS routes through tunnel
 - [ ] Cloudflare Access configured
-
-### Networking (Caddy)
-
-- [ ] Port 443 open
-- [ ] Origin CA certificates installed
-- [ ] Cloudflare SSL mode "Full (strict)"
-- [ ] Port 80 blocked
 
 ### Workers
 

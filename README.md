@@ -5,8 +5,7 @@ This repository contains everything needed to deploy OpenClaw on a single VPS wi
 **This project is an experiment** for using `claude code` for devops. A reasonable effort was made to ensure OpenClaw
 is running as securely as possible. However, there's no guarantee claude will always follow the playbooks as designed.
 
-It's strongly recommended to use the Cloudflare Tunnel networking option in openclaw-config.env.
-Caddy support (no Cloudflare Tunnel) is provided as an example.
+Networking uses Cloudflare Tunnel for zero exposed ports and hidden origin IP.
 
 Cloudflare Tunnel requires manual device pairing after initial setup. Claude should run the post deploy playbook
 and guide you through the process. It requires visiting the openclaw UI with a token, then approving the request
@@ -128,24 +127,15 @@ Messaging channel keys are not needed if using the OpenClaw UI for chat.
 
 Fill in your actual values in openclaw-config.env.
 
-### Step 2.2: Choose Networking Option
+### Step 2.2: Set Domain
 
-| Option | What You Need | Best For |
-|--------|---------------|----------|
-| **Cloudflare Tunnel** (Recommended) | Cloudflare account with domain | Maximum security, zero exposed ports |
-| **Caddy** | Cloudflare Origin CA certificate | Simpler setup, direct origin access |
-
-Update `openclaw-config.env` with your choice:
+Update `openclaw-config.env` with your domain:
 
 ```bash
-NETWORKING_OPTION=cloudflare-tunnel  # or "caddy"
 DOMAIN_OPENCLAW=openclaw.example.com
 ```
 
-**If using Caddy:** Follow [docs/CLOUDFLARE-SSL.md](docs/CLOUDFLARE-SSL.md) to generate Origin CA certificates first.
-
-**If using Cloudflare Tunnel:** No certificates needed - skip to Step 3.
-Claude will implement the tunnel and prompt for user confirmation.
+Cloudflare Tunnel is used for networking — no certificates needed. Claude will set up the tunnel during deployment.
 
 ### Step 3: Deploy with Claude Code
 
@@ -185,7 +175,7 @@ Claude runs the various [playbooks](/playbooks/) using values from openclaw-conf
    - Install Docker + Sysbox
    - Deploy OpenClaw gateway container
    - Set up Vector (ships container logs to Cloudflare)
-   - Configure Cloudflare Tunnel (recommended) or Caddy reverse proxy
+   - Configure Cloudflare Tunnel
    - Configure automated backups
    - Set up host alerter (Telegram notifications)
 
@@ -249,21 +239,17 @@ openclaw-vps/
 │   ├── ai-gateway/           # Cloudflare AI Gateway proxy worker
 │   └── log-receiver/         # Cloudflare log receiver worker
 ├── docs/
-│   ├── CLOUDFLARE-SSL.md     # SSL certificate setup (Caddy only)
 │   ├── CLOUDFLARE-TUNNEL.md  # Cloudflare Tunnel reference
 │   └── TESTING.md            # Testing instructions
 └── playbooks/                # Deployment playbooks (for Claude)
     ├── 01-base-setup.md
     ├── 03-docker.md
     ├── 04-vps1-openclaw.md
+    ├── 05-cloudflare-tunnel.md
     ├── 06-backup.md
     ├── 07-verification.md
     ├── 08-workers.md
-    ├── 09-decommission-vps2.md
-    ├── 98-post-deploy.md
-    └── networking/
-        ├── cloudflare-tunnel.md
-        └── caddy.md
+    └── 98-post-deploy.md
 ```
 
 ---
@@ -274,8 +260,8 @@ openclaw-vps/
 
 - Verify the gateway token is correct
 - Verify networking is correct:
-  - Check Cloudflare Access if using Cloudflare Tunnel
-  - Check that Caddy is running if not using Cloudflare Tunnel: `docker ps | grep caddy`
+  - Check Cloudflare Access configuration
+  - Check tunnel is running: `sudo systemctl status cloudflared`
 
 ### Logs Not Appearing in Cloudflare
 

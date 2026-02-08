@@ -198,7 +198,7 @@ Key parameters:
 
 **VPS-1 tunnel:** Named `openclaw`
 
-- Routes `DOMAIN_OPENCLAW` -> `http://localhost:18789` (gateway)
+- Routes `OPENCLAW_DOMAIN` -> `http://localhost:18789` (gateway)
 - `originRequest.noTLSVerify: true` (local HTTP, TLS at Cloudflare edge)
 
 **Config:** `/etc/cloudflared/config.yml`
@@ -370,7 +370,7 @@ git checkout -- Dockerfile 2>/dev/null || true
     "mode": "local",
     "trustedProxies": ["172.30.0.1"],
     "controlUi": {
-      "basePath": "<SUBPATH_OPENCLAW>"
+      "basePath": "<OPENCLAW_DOMAIN_PATH>"
     }
   },
   "agents": {
@@ -431,7 +431,7 @@ git checkout -- Dockerfile 2>/dev/null || true
 |---------|-----------|
 | `commands.restart: true` | Agents can modify config and trigger in-process restart via SIGUSR1 |
 | `trustedProxies: ["172.30.0.1"]` | cloudflared connects via Docker bridge gateway IP. Only exact IPs work — CIDR ranges NOT supported by `isTrustedProxyAddress()` |
-| `controlUi.basePath` | URL prefix for Control UI, set from `SUBPATH_OPENCLAW` in config |
+| `controlUi.basePath` | URL prefix for Control UI, set from `OPENCLAW_DOMAIN_PATH` in config |
 | `sandbox.mode: "all"` | All agents run in Docker sandboxes. Requires Docker installed inside container (build patch #2). Without Docker, `spawn docker` crashes with EACCES. Fallback: `"non-main"` |
 | `sandbox.docker.network: "bridge"` | Required for browser tool. `"none"` breaks CDP connectivity (gateway can't reach port 9222 in sandbox) |
 | `tmpfs /home/linuxbrew:uid=1000,gid=1000` | Makes sandbox home writable for `~/.claude.json`. The `:uid=1000,gid=1000` is critical — without it, tmpfs mounts as root-owned and linuxbrew user can't write |

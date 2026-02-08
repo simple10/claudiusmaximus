@@ -5,6 +5,7 @@ Install and configure OpenClaw gateway on VPS-1.
 ## Overview
 
 This playbook configures:
+
 - Sysbox runtime for secure container-in-container
 - Docker networks for OpenClaw
 - Directory structure and permissions
@@ -22,10 +23,11 @@ This playbook configures:
 ## Variables
 
 From `../openclaw-config.env`:
+
 - `ANTHROPIC_API_KEY` - Required for OpenClaw
 - `TELEGRAM_BOT_TOKEN` - Optional
 - `DISCORD_BOT_TOKEN` - Optional
-- `SUBPATH_OPENCLAW` - URL subpath for the gateway UI (default: `/_openclaw`)
+- `OPENCLAW_DOMAIN_PATH` - URL subpath for the gateway UI (default: `/_openclaw`)
 
 ---
 
@@ -352,7 +354,7 @@ sudo tee /home/openclaw/.openclaw/openclaw.json << 'JSONEOF'
     "mode": "local",
     "trustedProxies": ["172.30.0.1"],
     "controlUi": {
-      "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}"
+      "basePath": "${OPENCLAW_DOMAIN_PATH:-/_openclaw}"
     }
   },
   "agents": {
@@ -420,6 +422,7 @@ sudo chmod 600 /home/openclaw/.openclaw/openclaw.json
 Instead of maintaining a forked Dockerfile, we patch the upstream Dockerfile in-place before building. Each patch auto-skips when already applied.
 
 Two additions are patched:
+
 - Claude Code CLI: installs `@anthropic-ai/claude-code` globally so agents can use it as a coding tool
 - Docker + gosu: installs `docker.io` and `gosu` for nested Docker (sandbox isolation via Sysbox)
 
@@ -497,6 +500,7 @@ No separate patch files needed — the build script contains the patches directl
 ## 4.8c Create Gateway Entrypoint Script
 
 The entrypoint script runs as root (container uses `user: "0:0"`) and handles several setup tasks before dropping privileges and starting the gateway:
+
 1. **Lock file cleanup** — removes stale `gateway.*.lock` files left by unclean shutdowns
 2. **Config permissions fix** — ensures `openclaw.json` is `chmod 600` (gateway may rewrite with looser permissions)
 3. **Sandbox credentials ownership fix** — chowns `.claude-sandbox` to node (1000) to undo Sysbox uid remapping

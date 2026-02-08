@@ -5,6 +5,7 @@ Deploy the AI Gateway and Log Receiver Workers to Cloudflare.
 ## Overview
 
 This playbook deploys:
+
 - **AI Gateway Worker** — Proxies LLM requests through Cloudflare AI Gateway for analytics
 - **Log Receiver Worker** — Receives container logs from Vector for Cloudflare capture
 
@@ -19,6 +20,7 @@ This playbook deploys:
 ## Variables
 
 From `../openclaw-config.env`:
+
 - `AI_GATEWAY_WORKER_URL` — Set after deploying AI Gateway Worker
 - `AI_GATEWAY_AUTH_TOKEN` — Auth token for AI Gateway Worker
 - `LOG_WORKER_URL` — Set after deploying Log Receiver Worker
@@ -120,12 +122,14 @@ Note the Worker URL from the output (e.g., `https://log-receiver.<account>.worke
 ### Update VPS Configuration
 
 Update `openclaw-config.env`:
+
 ```
 LOG_WORKER_URL=https://log-receiver.<account>.workers.dev/logs
 LOG_WORKER_TOKEN=<the AUTH_TOKEN you set above>
 ```
 
 Then update the VPS `.env` and restart Vector:
+
 ```bash
 # On VPS-1
 sudo -u openclaw bash -c 'cd /home/openclaw/openclaw && docker compose restart vector'
@@ -162,7 +166,7 @@ Set up uptime monitoring for the gateway.
 2. Click **Create**
 3. Configure:
    - **Name:** OpenClaw Gateway
-   - **URL:** `https://<DOMAIN_OPENCLAW>/health`
+   - **URL:** `https://<OPENCLAW_DOMAIN>/health`
    - **Frequency:** Every 5 minutes
    - **Notification:** Email (and/or webhook)
 4. Save

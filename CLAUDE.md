@@ -61,11 +61,11 @@ VPS1_IP=X.X.X.X                             # VPS-1 public IP
 SSH_KEY_PATH=~/.ssh/ovh_openclaw_ed25519    # SSH private key path
 SSH_USER=adminclaw                          # SSH user (initially ubuntu then changed to adminclaw during hardening)
 SSH_PORT=222                                # SSH port (initially 22 then changed to 222 during hardening)
-DOMAIN_OPENCLAW=openclaw.example.com
+OPENCLAW_DOMAIN=openclaw.example.com
 ANTHROPIC_API_KEY=sk-ant-...
 
 # URL subpaths (no trailing slash; empty string "" to serve at root)
-SUBPATH_OPENCLAW=/_openclaw
+OPENCLAW_DOMAIN_PATH=/_openclaw
 
 # Workers
 LOG_WORKER_URL=https://log-receiver.<account>.workers.dev/logs
@@ -116,7 +116,7 @@ Required fields to check in openclaw-config.env:
 - `VPS1_IP` - Must be a valid IP
 - `SSH_KEY_PATH` - Must exist on local system
 - `SSH_USER` - Must be set (typically `ubuntu` for fresh OVH VPS)
-- `DOMAIN_OPENCLAW` - Must be set
+- `OPENCLAW_DOMAIN` - Must be set
 - `ANTHROPIC_API_KEY` - Must be set, can be a placeholder
 
 If any required field is missing, report all missing fields and ask user to update the file.
@@ -176,7 +176,7 @@ Show summary and confirm:
 > "Ready to deploy:
 >
 > - VPS-1: `<VPS1_IP>` (OpenClaw)
-> - Domain: `<DOMAIN_OPENCLAW>`
+> - Domain: `<OPENCLAW_DOMAIN>`
 > - Networking: Cloudflare Tunnel
 > - Playbooks: Base deployment
 >

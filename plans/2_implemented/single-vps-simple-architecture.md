@@ -206,7 +206,7 @@ Two lightweight replacements:
 
 ### Cloudflare Health Check (uptime monitoring)
 
-- Configure in Cloudflare dashboard: Health Check on `https://<DOMAIN_OPENCLAW>/health`
+- Configure in Cloudflare dashboard: Health Check on `https://<OPENCLAW_DOMAIN>/health`
 - Checks every 1-5 minutes from Cloudflare edge
 - Email/webhook notification if gateway is unreachable
 - Free on all Cloudflare plans

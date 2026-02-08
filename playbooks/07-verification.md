@@ -113,7 +113,7 @@ curl -s https://<AI_GATEWAY_WORKER_URL>/health
 sudo systemctl status cloudflared
 
 # Test external access (from any machine)
-curl -s https://claw.example.com<SUBPATH_OPENCLAW>/ | head -5
+curl -s https://claw.example.com<OPENCLAW_DOMAIN_PATH>/ | head -5
 
 # Verify direct IP access is blocked
 curl -sk --connect-timeout 5 https://<VPS1-IP>/ || echo "Direct access blocked (expected)"

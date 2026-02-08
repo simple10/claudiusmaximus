@@ -9,7 +9,7 @@ Before testing, note these security configurations:
 | Setting | Value | Reason |
 |---------|-------|--------|
 | **SSH Port** | 222 (not 22) | Avoid bot scanners |
-| **OpenClaw Path** | `<SUBPATH_OPENCLAW>/` | Obscured URL (from openclaw-config.env) |
+| **OpenClaw Path** | `<OPENCLAW_DOMAIN_PATH>/` | Obscured URL (from openclaw-config.env) |
 | **HTTP Port 80** | Blocked | No HTTP access |
 | **HTTP Port 22** | Blocked | SSH on 222 |
 | **HTTP Port 443** | Blocked | Cloudflare Tunnel uses outbound only |
@@ -111,7 +111,7 @@ Use the Chrome DevTools MCP to test the web interface.
 
 ```
 # Navigate to OpenClaw page
-mcp__chrome-devtools__navigate_page(url="https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/")
+mcp__chrome-devtools__navigate_page(url="https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/")
 
 # Take a snapshot to verify the page loaded
 mcp__chrome-devtools__take_snapshot()
@@ -136,7 +136,7 @@ mcp__chrome-devtools__list_console_messages(types=["error"])
 
 ```
 # Try random path - should return 404
-mcp__chrome-devtools__navigate_page(url="https://<DOMAIN_OPENCLAW>/random-path")
+mcp__chrome-devtools__navigate_page(url="https://<OPENCLAW_DOMAIN>/random-path")
 mcp__chrome-devtools__take_snapshot()
 ```
 
@@ -227,7 +227,7 @@ ssh -p 222 adminclaw@<VPS1_IP> "sudo -u openclaw docker ps --format '{{.Names}}:
 
 1. Check Cloudflare SSL mode is "Full (strict)"
 2. Verify tunnel is running: `sudo systemctl status cloudflared`
-3. Check DNS routes through tunnel: `dig <DOMAIN_OPENCLAW>`
+3. Check DNS routes through tunnel: `dig <OPENCLAW_DOMAIN>`
 
 ### Gateway Not Healthy
 

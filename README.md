@@ -132,7 +132,7 @@ Fill in your actual values in openclaw-config.env.
 Update `openclaw-config.env` with your domain:
 
 ```bash
-DOMAIN_OPENCLAW=openclaw.example.com
+OPENCLAW_DOMAIN=openclaw.example.com
 ```
 
 Cloudflare Tunnel is used for networking — no certificates needed. Claude will set up the tunnel during deployment.

@@ -32,10 +32,10 @@ ssh -i <SSH_KEY_PATH> -p <SSH_PORT> <SSH_USER>@<VPS1_IP> \
 Construct and present the access URL to the user:
 
 ```
-https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/chat?token=<TOKEN>
+https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/chat?token=<TOKEN>
 ```
 
-> **Note:** If `SUBPATH_OPENCLAW` is empty in `openclaw-config.env`, the URL is simply `https://<DOMAIN_OPENCLAW>/chat?token=<TOKEN>`.
+> **Note:** If `OPENCLAW_DOMAIN_PATH` is empty in `openclaw-config.env`, the URL is simply `https://<OPENCLAW_DOMAIN>/chat?token=<TOKEN>`.
 
 ---
 

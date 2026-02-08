@@ -10,8 +10,8 @@ Static assets (favicons) break when OpenClaw is accessed at `/_openclaw/chat` be
 
 ## Solution
 
-1. Add `SUBPATH_OPENCLAW` and `SUBPATH_GRAFANA` to `openclaw-config.env`
-2. Set `gateway.controlUi.basePath` from `SUBPATH_OPENCLAW` (like Grafana's `GF_SERVER_SERVE_FROM_SUB_PATH`)
+1. Add `OPENCLAW_DOMAIN_PATH` and `SUBPATH_GRAFANA` to `openclaw-config.env`
+2. Set `gateway.controlUi.basePath` from `OPENCLAW_DOMAIN_PATH` (like Grafana's `GF_SERVER_SERVE_FROM_SUB_PATH`)
 3. Switch Caddy from `handle_path` to `handle` for OpenClaw (matching the Grafana pattern)
 4. Replace all hardcoded subpaths in playbooks/docs with variable placeholders
 
@@ -23,7 +23,7 @@ Both services then work identically: the app is aware of its subpath, and the pr
 
 | # | File | Change |
 |---|------|--------|
-| 1 | `openclaw-config.env.example` | Add `SUBPATH_OPENCLAW` and `SUBPATH_GRAFANA` |
+| 1 | `openclaw-config.env.example` | Add `OPENCLAW_DOMAIN_PATH` and `SUBPATH_GRAFANA` |
 | 2 | `openclaw-config.env` | Add same variables (actual config) |
 | 3 | `playbooks/04-vps1-openclaw.md` §4.8 | Add `gateway.controlUi.basePath` to openclaw.json |
 | 4 | `playbooks/networking/caddy.md` | Switch OpenClaw from `handle_path` to `handle`; use `<SUBPATH_*>` placeholders |
@@ -48,7 +48,7 @@ Add to `openclaw-config.env.example` and `openclaw-config.env`:
 ```bash
 # URL subpaths for obscured access (no trailing slash)
 # Set to empty string "" to serve at root (e.g., when using dedicated domains with Cloudflare Tunnel)
-SUBPATH_OPENCLAW=/_openclaw
+OPENCLAW_DOMAIN_PATH=/_openclaw
 SUBPATH_GRAFANA=/_observe/grafana
 ```
 
@@ -61,7 +61,7 @@ Add `controlUi.basePath` to the gateway config:
   "bind": "lan",
   "mode": "local",
   "controlUi": {
-    "basePath": "${SUBPATH_OPENCLAW:-/_openclaw}"
+    "basePath": "${OPENCLAW_DOMAIN_PATH:-/_openclaw}"
   }
 }
 ```
@@ -79,14 +79,14 @@ handle_path /_openclaw/* {
 }
 
 # After (fixed — preserves prefix, gateway strips it via controlUi.basePath):
-handle <SUBPATH_OPENCLAW>/* {
+handle <OPENCLAW_DOMAIN_PATH>/* {
     reverse_proxy localhost:18789 {
         header_up Host {host}
         header_up X-Real-IP {remote}
     }
 }
-handle <SUBPATH_OPENCLAW> {
-    redir <SUBPATH_OPENCLAW>/ permanent
+handle <OPENCLAW_DOMAIN_PATH> {
+    redir <OPENCLAW_DOMAIN_PATH>/ permanent
 }
 ```
 
@@ -104,7 +104,7 @@ Line 101: Replace hardcoded path in `GF_SERVER_ROOT_URL`:
 
 ### 6-10. Docs and remaining playbooks
 
-Replace all hardcoded `/_openclaw/` and `/_observe/grafana/` with `<SUBPATH_OPENCLAW>` and `<SUBPATH_GRAFANA>` placeholders. Key locations:
+Replace all hardcoded `/_openclaw/` and `/_observe/grafana/` with `<OPENCLAW_DOMAIN_PATH>` and `<SUBPATH_GRAFANA>` placeholders. Key locations:
 
 - **cloudflare-tunnel.md**: Lines 152, 291, 304, 326 — test URLs and Access path
 - **07-verification.md**: Lines 200, 213, 277 — test commands
@@ -117,7 +117,7 @@ Replace all hardcoded `/_openclaw/` and `/_observe/grafana/` with `<SUBPATH_OPEN
 Add to Key Deployment Notes:
 
 ```
-17. **UI subpaths:** Configure `SUBPATH_OPENCLAW` and `SUBPATH_GRAFANA` in openclaw-config.env; gateway uses `controlUi.basePath`, Grafana uses `GF_SERVER_SERVE_FROM_SUB_PATH`; Caddy must use `handle` (not `handle_path`) to preserve the prefix
+17. **UI subpaths:** Configure `OPENCLAW_DOMAIN_PATH` and `SUBPATH_GRAFANA` in openclaw-config.env; gateway uses `controlUi.basePath`, Grafana uses `GF_SERVER_SERVE_FROM_SUB_PATH`; Caddy must use `handle` (not `handle_path`) to preserve the prefix
 ```
 
 ---
@@ -128,24 +128,24 @@ After deploying changes on VPS-1:
 
 ```bash
 # 1. Static assets load correctly under subpath
-curl -s https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/favicon.svg | head -3
+curl -s https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/favicon.svg | head -3
 # Should return SVG, not HTML
 
 # 2. SPA routes still work
-curl -s https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/chat | head -3
+curl -s https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/chat | head -3
 # Should return HTML (index.html — correct SPA behavior)
 
 # 3. JS/CSS assets still load
-curl -sI https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/assets/index-BJMYln02.js
+curl -sI https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/assets/index-BJMYln02.js
 # Should return 200 with content-type: application/javascript
 
 # 4. Health endpoint works
-curl -s https://<DOMAIN_OPENCLAW>/health
+curl -s https://<OPENCLAW_DOMAIN>/health
 # Note: health endpoint may not be under subpath (depends on gateway routing order)
 
 # 5. Root redirect works (Caddy only)
-curl -sI https://<DOMAIN_OPENCLAW>/
-# Should redirect to <SUBPATH_OPENCLAW>/
+curl -sI https://<OPENCLAW_DOMAIN>/
+# Should redirect to <OPENCLAW_DOMAIN_PATH>/
 
 # 6. Grafana still works
 curl -s https://<DOMAIN_GRAFANA><SUBPATH_GRAFANA>/api/health

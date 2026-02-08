@@ -17,7 +17,7 @@ An interactive playbook Claude follows after `07-verification.md` completes. Str
 SSH to VPS-1, read `OPENCLAW_GATEWAY_TOKEN` from `/home/openclaw/openclaw/.env`, and construct the access URL:
 
 ```
-https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/chat?token=<TOKEN>
+https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/chat?token=<TOKEN>
 ```
 
 Present the clickable URL to the user.

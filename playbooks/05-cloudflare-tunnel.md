@@ -35,8 +35,8 @@ This playbook configures:
 
 From `../openclaw-config.env`:
 
-- `DOMAIN_OPENCLAW` - Domain for OpenClaw (e.g., openclaw.example.com)
-- `SUBPATH_OPENCLAW` - URL subpath for OpenClaw (from openclaw-config.env)
+- `OPENCLAW_DOMAIN` - Domain for OpenClaw (e.g., openclaw.example.com)
+- `OPENCLAW_DOMAIN_PATH` - URL subpath for OpenClaw (from openclaw-config.env)
 
 ## Architecture
 
@@ -110,14 +110,14 @@ Save the tunnel ID for later steps.
 ```bash
 sudo mkdir -p /etc/cloudflared
 
-# Replace <DOMAIN_OPENCLAW> with your domain
+# Replace <OPENCLAW_DOMAIN> with your domain
 sudo tee /etc/cloudflared/config.yml << 'EOF'
 tunnel: openclaw
 credentials-file: /etc/cloudflared/credentials.json
 
 ingress:
   # OpenClaw Gateway (web UI and API)
-  - hostname: <DOMAIN_OPENCLAW>
+  - hostname: <OPENCLAW_DOMAIN>
     service: http://localhost:18789
     originRequest:
       noTLSVerify: true
@@ -135,12 +135,12 @@ sudo chmod 600 /etc/cloudflared/credentials.json
 
 ```bash
 # Route your domain through the tunnel
-cloudflared tunnel route dns openclaw <DOMAIN_OPENCLAW>
+cloudflared tunnel route dns openclaw <OPENCLAW_DOMAIN>
 ```
 
 **Important:** This creates a CNAME record pointing to the tunnel. In Cloudflare Dashboard, you should see:
 
-- `<DOMAIN_OPENCLAW>` -> `CNAME` -> `<tunnel-id>.cfargotunnel.com` (Proxied)
+- `<OPENCLAW_DOMAIN>` -> `CNAME` -> `<tunnel-id>.cfargotunnel.com` (Proxied)
 
 ### Step 6: Test the Tunnel
 
@@ -149,7 +149,7 @@ cloudflared tunnel route dns openclaw <DOMAIN_OPENCLAW>
 cloudflared tunnel run openclaw
 
 # In another terminal, verify it works
-curl -s https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/ | head -5
+curl -s https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/ | head -5
 ```
 
 ### Step 7: Install as System Service
@@ -191,8 +191,8 @@ Add authentication via Cloudflare Access for additional security.
 3. Configure:
    - **Application name:** OpenClaw
    - **Session duration:** 24 hours
-   - **Application domain:** `<DOMAIN_OPENCLAW>`
-   - **Path:** `<SUBPATH_OPENCLAW>/*` (or leave blank to protect entire domain)
+   - **Application domain:** `<OPENCLAW_DOMAIN>`
+   - **Path:** `<OPENCLAW_DOMAIN_PATH>/*` (or leave blank to protect entire domain)
 
 4. Add a policy:
    - **Policy name:** Allowed Users
@@ -203,7 +203,7 @@ Add authentication via Cloudflare Access for additional security.
 
 ### Test Access Protection
 
-1. Open `https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/` in an incognito window
+1. Open `https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/` in an incognito window
 2. You should see the Cloudflare Access login page
 3. Authenticate with your configured method
 4. You should now see the OpenClaw UI
@@ -223,7 +223,7 @@ cloudflared tunnel info openclaw
 sudo ufw status | grep 443 || echo "Port 443 not in UFW (correct)"
 
 # Test external access
-curl -s https://<DOMAIN_OPENCLAW><SUBPATH_OPENCLAW>/ | head -5
+curl -s https://<OPENCLAW_DOMAIN><OPENCLAW_DOMAIN_PATH>/ | head -5
 
 # Verify direct IP access fails
 curl -sk --connect-timeout 5 https://<VPS1_IP>/ || echo "Direct access blocked (expected)"
@@ -250,7 +250,7 @@ cloudflared tunnel info openclaw
 
 ```bash
 # Check if CNAME is configured
-dig <DOMAIN_OPENCLAW>
+dig <OPENCLAW_DOMAIN>
 
 # Should show CNAME to <tunnel-id>.cfargotunnel.com
 ```
@@ -297,7 +297,7 @@ sudo cp ~/.cloudflared/<NEW_TUNNEL_ID>.json /etc/cloudflared/credentials.json
 sudo systemctl restart cloudflared
 
 # Re-add DNS route
-cloudflared tunnel route dns openclaw <DOMAIN_OPENCLAW>
+cloudflared tunnel route dns openclaw <OPENCLAW_DOMAIN>
 ```
 
 ---

@@ -1,6 +1,6 @@
 # 99 - New Feature Planning
 
-Guidelines for Claude when planning a new feature for the VPS deployment.
+Guidelines for AGENTS when planning a new feature for the VPS deployment.
 
 ## Overview
 
@@ -9,6 +9,7 @@ This playbook provides a structured process for planning new features before imp
 ## When to Use
 
 Use this playbook when adding functionality that:
+
 - Introduces a new service or component
 - Modifies multiple existing playbooks
 - Requires configuration changes across VPSs

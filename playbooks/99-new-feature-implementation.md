@@ -46,7 +46,7 @@ mkdir -p .state/tmp
   - Retry: success
 ```
 
-The tracking file is for your reference during implementation. Use whatever format helps track progress and diagnose issues.
+The tracking file is for AGENTS reference during implementation. Use whatever format helps track progress and diagnose issues between AGENTS sessions.
 
 ### 3. Execute Implementation
 

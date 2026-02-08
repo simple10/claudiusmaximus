@@ -386,3 +386,19 @@ sudo ufw status | grep 51820
 - OpenClaw Documentation: <https://docs.openclaw.ai>
 - OpenClaw GitHub: <https://github.com/openclaw/openclaw>
 - OVHCloud Support: <https://help.ovhcloud.com>
+
+---
+
+## Resources
+
+- <https://github.com/VoltAgent/awesome-openclaw-skills>
+- <https://github.com/lekt9/openclaw-foundry>
+- <https://gist.github.com/simple10/50b9d5fdaf0a12162c2a682c1f7e2391>
+- <https://github.com/knostic/openclaw-telemetry/>
+- <https://github.com/knostic/openclaw-shield>
+- <https://www.knostic.ai/blog/why-we-built-openclaw-shield-securing-ai-agents-from-themselves>
+
+## Related Apps & Tools
+
+- <https://www.easyclaw.app/docs/privacy>
+- <https://seqpu.com/mco>
